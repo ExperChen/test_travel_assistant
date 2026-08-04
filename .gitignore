@@ -1,0 +1,29 @@
+# Python
+venv/
+.venv/
+__pycache__/
+*.pyc
+
+# Env & secrets
+.env
+.env.*
+!.env.example
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.next/
+frontend/build/
+frontend/.env
+frontend/.env.local
+
+# Node (root-level accidental install, see PROJECT_REVIEW_MERGED_EN.md P0-B)
+node_modules/
+
+# Runtime artifacts
+app/data/attraction_cache.json
+app/data/*.lock
+app/data/*.tmp-*
+
+# Docs (lives at repo root, not frontend/ -- verify with `git check-ignore -v` if you move it)
+前端页面设计v1.md

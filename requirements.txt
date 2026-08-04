@@ -1,0 +1,11 @@
+langchain
+langchain-openai
+python-dotenv
+langchain-google-genai
+google-search-results
+langsmith
+geopy
+fastapi
+uvicorn[standard]
+slowapi
+filelock

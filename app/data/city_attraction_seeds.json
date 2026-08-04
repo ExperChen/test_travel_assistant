@@ -1,0 +1,707 @@
+{
+  "abu dhabi": [
+    "Sheikh Zayed Grand Mosque",
+    "Louvre Abu Dhabi",
+    "Qasr Al Watan",
+    "Ferrari World Abu Dhabi",
+    "Corniche Beach"
+  ],
+  "amsterdam": [
+    "Rijksmuseum",
+    "Van Gogh Museum",
+    "Anne Frank House",
+    "Dam Square",
+    "Jordaan"
+  ],
+  "athens": [
+    "Acropolis of Athens",
+    "Parthenon",
+    "Acropolis Museum",
+    "Ancient Agora of Athens",
+    "Temple of Olympian Zeus"
+  ],
+  "auckland": [
+    "Sky Tower",
+    "Auckland War Memorial Museum",
+    "Waiheke Island",
+    "Auckland Domain",
+    "Viaduct Harbour"
+  ],
+  "bangkok": [
+    "The Grand Palace",
+    "Wat Pho",
+    "Wat Arun",
+    "Chatuchak Weekend Market",
+    "Jim Thompson House Museum"
+  ],
+  "barcelona": [
+    "Sagrada Familia",
+    "Park Guell",
+    "Casa Batllo",
+    "La Rambla",
+    "Gothic Quarter"
+  ],
+  "beijing": [
+    "Forbidden City",
+    "Temple of Heaven",
+    "Summer Palace",
+    "Mutianyu Great Wall",
+    "Tiananmen Square"
+  ],
+  "berlin": [
+    "Brandenburg Gate",
+    "Berlin Wall Memorial",
+    "Museum Island",
+    "Reichstag Building",
+    "Checkpoint Charlie"
+  ],
+  "bogota": [
+    "Monserrate",
+    "Gold Museum",
+    "Plaza Bolivar",
+    "Botero Museum",
+    "La Candelaria"
+  ],
+  "boston": [
+    "Freedom Trail",
+    "Fenway Park",
+    "Boston Common",
+    "Museum of Fine Arts Boston",
+    "Faneuil Hall Marketplace"
+  ],
+  "brisbane": [
+    "South Bank Parklands",
+    "Lone Pine Koala Sanctuary",
+    "Story Bridge",
+    "Queensland Art Gallery",
+    "Mount Coot-tha Lookout"
+  ],
+  "brussels": [
+    "Grand Place",
+    "Atomium",
+    "Manneken Pis",
+    "Royal Palace of Brussels",
+    "Galeries Royales Saint-Hubert"
+  ],
+  "budapest": [
+    "Buda Castle",
+    "Parliament Building",
+    "Fishermans Bastion",
+    "Szechenyi Thermal Bath",
+    "St. Stephens Basilica"
+  ],
+  "buenos aires": [
+    "Plaza de Mayo",
+    "Recoleta Cemetery",
+    "Teatro Colon",
+    "La Boca",
+    "Palermo"
+  ],
+  "busan": [
+    "Haeundae Beach",
+    "Gamcheon Culture Village",
+    "Haedong Yonggungsa",
+    "Jagalchi Market",
+    "Busan Tower"
+  ],
+  "cairo": [
+    "Great Pyramid of Giza",
+    "Egyptian Museum",
+    "Khan el-Khalili",
+    "Citadel of Cairo",
+    "Al-Azhar Mosque"
+  ],
+  "cape town": [
+    "Table Mountain",
+    "V&A Waterfront",
+    "Robben Island",
+    "Cape Point",
+    "Kirstenbosch National Botanical Garden"
+  ],
+  "chicago": [
+    "Millennium Park",
+    "Art Institute of Chicago",
+    "Navy Pier",
+    "Willis Tower Skydeck",
+    "Cloud Gate"
+  ],
+  "copenhagen": [
+    "Tivoli Gardens",
+    "Nyhavn",
+    "The Little Mermaid",
+    "Rosenborg Castle",
+    "Christiansborg Palace"
+  ],
+  "delhi": [
+    "Red Fort",
+    "Qutub Minar",
+    "India Gate",
+    "Humayuns Tomb",
+    "Lotus Temple"
+  ],
+  "doha": [
+    "Museum of Islamic Art",
+    "Souq Waqif",
+    "National Museum of Qatar",
+    "The Pearl-Qatar",
+    "Katara Cultural Village"
+  ],
+  "dubai": [
+    "Burj Khalifa",
+    "Dubai Mall",
+    "Palm Jumeirah",
+    "Dubai Marina",
+    "Dubai Fountain"
+  ],
+  "dublin": [
+    "Guinness Storehouse",
+    "Trinity College Dublin",
+    "Dublin Castle",
+    "St. Patricks Cathedral",
+    "Temple Bar"
+  ],
+  "edinburgh": [
+    "Edinburgh Castle",
+    "Royal Mile",
+    "Arthurs Seat",
+    "Palace of Holyroodhouse",
+    "Calton Hill"
+  ],
+  "florence": [
+    "Uffizi Gallery",
+    "Florence Cathedral",
+    "Ponte Vecchio",
+    "Piazzale Michelangelo",
+    "Palazzo Pitti"
+  ],
+  "geneva": [
+    "Jet dEau",
+    "St. Pierre Cathedral",
+    "Palais des Nations",
+    "Lake Geneva",
+    "Jardin Anglais"
+  ],
+  "george town": [
+    "Chew Jetty",
+    "Armenian Street",
+    "Khoo Kongsi",
+    "Penang Street Art",
+    "Pinang Peranakan Mansion"
+  ],
+  "hanoi": [
+    "Hoan Kiem Lake",
+    "Temple of Literature",
+    "Old Quarter",
+    "Ho Chi Minh Mausoleum",
+    "Thang Long Imperial Citadel"
+  ],
+  "helsinki": [
+    "Helsinki Cathedral",
+    "Suomenlinna",
+    "Temppeliaukio Church",
+    "Market Square",
+    "Uspenski Cathedral"
+  ],
+  "hong kong": [
+    "Victoria Peak",
+    "Tsim Sha Tsui Promenade",
+    "Hong Kong Disneyland",
+    "Tian Tan Buddha",
+    "Star Ferry"
+  ],
+  "honolulu": [
+    "Waikiki Beach",
+    "Diamond Head",
+    "Pearl Harbor National Memorial",
+    "Iolani Palace",
+    "Hanauma Bay"
+  ],
+  "houston": [
+    "Space Center Houston",
+    "Museum of Fine Arts Houston",
+    "Houston Zoo",
+    "Buffalo Bayou Park",
+    "The Galleria"
+  ],
+  "istanbul": [
+    "Hagia Sophia",
+    "Blue Mosque",
+    "Topkapi Palace",
+    "Grand Bazaar",
+    "Basilica Cistern"
+  ],
+  "jakarta": [
+    "National Monument",
+    "Istiqlal Mosque",
+    "Jakarta Old Town",
+    "National Museum of Indonesia",
+    "Ancol Dreamland"
+  ],
+  "jeju": [
+    "Seongsan Ilchulbong",
+    "Hallasan National Park",
+    "Manjanggul Lava Tube",
+    "Cheonjiyeon Waterfall",
+    "Jeju Folk Village"
+  ],
+  "jerusalem": [
+    "Western Wall",
+    "Church of the Holy Sepulchre",
+    "Dome of the Rock",
+    "Mount of Olives",
+    "Yad Vashem"
+  ],
+  "johannesburg": [
+    "Apartheid Museum",
+    "Constitution Hill",
+    "Soweto",
+    "Gold Reef City",
+    "Maboneng Precinct"
+  ],
+  "krakow": [
+    "Wawel Castle",
+    "Main Market Square",
+    "St. Marys Basilica",
+    "Kazimierz",
+    "Schindlers Factory Museum"
+  ],
+  "kyoto": [
+    "Fushimi Inari Taisha",
+    "Kiyomizu-dera",
+    "Kinkaku-ji",
+    "Arashiyama Bamboo Grove",
+    "Gion"
+  ],
+  "kuala lumpur": [
+    "Petronas Twin Towers",
+    "Batu Caves",
+    "KL Tower",
+    "Central Market",
+    "Merdeka Square"
+  ],
+  "las vegas": [
+    "Las Vegas Strip",
+    "Bellagio Fountains",
+    "Fremont Street Experience",
+    "High Roller",
+    "Red Rock Canyon"
+  ],
+  "lisbon": [
+    "Belem Tower",
+    "Jeronimos Monastery",
+    "Sao Jorge Castle",
+    "Praca do Comercio",
+    "Alfama"
+  ],
+  "london": [
+    "British Museum",
+    "Tower of London",
+    "Buckingham Palace",
+    "London Eye",
+    "Big Ben"
+  ],
+  "los angeles": [
+    "Hollywood Sign",
+    "Griffith Observatory",
+    "Santa Monica Pier",
+    "Getty Center",
+    "Universal Studios Hollywood"
+  ],
+  "lyon": [
+    "Basilica of Notre-Dame de Fourviere",
+    "Vieux Lyon",
+    "Parc de la Tete dOr",
+    "Place Bellecour",
+    "Musee des Confluences"
+  ],
+  "madrid": [
+    "Prado Museum",
+    "Royal Palace of Madrid",
+    "Plaza Mayor",
+    "Retiro Park",
+    "Puerta del Sol"
+  ],
+  "manchester": [
+    "Old Trafford",
+    "Science and Industry Museum",
+    "Manchester Cathedral",
+    "The Lowry",
+    "Northern Quarter"
+  ],
+  "manila": [
+    "Intramuros",
+    "Rizal Park",
+    "National Museum of the Philippines",
+    "Fort Santiago",
+    "San Agustin Church"
+  ],
+  "marrakech": [
+    "Jemaa el-Fnaa",
+    "Majorelle Garden",
+    "Bahia Palace",
+    "Koutoubia Mosque",
+    "Saadian Tombs"
+  ],
+  "melbourne": [
+    "Federation Square",
+    "Queen Victoria Market",
+    "Royal Botanic Gardens Victoria",
+    "Melbourne Skydeck",
+    "St Kilda Beach"
+  ],
+  "mexico city": [
+    "Zocalo",
+    "Chapultepec Castle",
+    "National Museum of Anthropology",
+    "Palacio de Bellas Artes",
+    "Frida Kahlo Museum"
+  ],
+  "miami": [
+    "South Beach",
+    "Vizcaya Museum and Gardens",
+    "Wynwood Walls",
+    "Bayside Marketplace",
+    "Little Havana"
+  ],
+  "milan": [
+    "Duomo di Milano",
+    "Galleria Vittorio Emanuele II",
+    "The Last Supper",
+    "Sforza Castle",
+    "Navigli"
+  ],
+  "montreal": [
+    "Old Montreal",
+    "Mount Royal",
+    "Notre-Dame Basilica of Montreal",
+    "Montreal Museum of Fine Arts",
+    "Jean-Talon Market"
+  ],
+  "moscow": [
+    "Red Square",
+    "Saint Basils Cathedral",
+    "Kremlin",
+    "Bolshoi Theatre",
+    "Gorky Park"
+  ],
+  "mumbai": [
+    "Gateway of India",
+    "Marine Drive",
+    "Elephanta Caves",
+    "Chhatrapati Shivaji Maharaj Terminus",
+    "Siddhivinayak Temple"
+  ],
+  "munich": [
+    "Marienplatz",
+    "Nymphenburg Palace",
+    "English Garden",
+    "BMW Museum",
+    "Olympiapark"
+  ],
+  "nashville": [
+    "Country Music Hall of Fame",
+    "Grand Ole Opry",
+    "The Parthenon",
+    "Broadway",
+    "Ryman Auditorium"
+  ],
+  "new orleans": [
+    "French Quarter",
+    "Jackson Square",
+    "Garden District",
+    "Bourbon Street",
+    "National WWII Museum"
+  ],
+  "new york": [
+    "Statue of Liberty",
+    "Times Square",
+    "Central Park",
+    "Empire State Building",
+    "Metropolitan Museum of Art"
+  ],
+  "osaka": [
+    "Osaka Castle",
+    "Dotonbori",
+    "Universal Studios Japan",
+    "Umeda Sky Building",
+    "Shitenno-ji"
+  ],
+  "oslo": [
+    "Vigeland Park",
+    "Oslo Opera House",
+    "Akershus Fortress",
+    "MUNCH",
+    "Bygdoy Peninsula"
+  ],
+  "paris": [
+    "Eiffel Tower",
+    "Louvre Museum",
+    "Notre-Dame Cathedral",
+    "Arc de Triomphe",
+    "Montmartre"
+  ],
+  "pattaya": [
+    "The Sanctuary of Truth",
+    "Pattaya Floating Market",
+    "Big Buddha Temple",
+    "Nong Nooch Tropical Garden",
+    "Art in Paradise Pattaya"
+  ],
+  "penang": [
+    "Penang Hill",
+    "Chew Jetty",
+    "Kek Lok Si Temple",
+    "Armenian Street",
+    "Penang Street Art"
+  ],
+  "philadelphia": [
+    "Liberty Bell",
+    "Independence Hall",
+    "Philadelphia Museum of Art",
+    "Reading Terminal Market",
+    "Eastern State Penitentiary"
+  ],
+  "phuket": [
+    "Big Buddha Phuket",
+    "Phang Nga Bay",
+    "Old Phuket Town",
+    "Wat Chalong",
+    "Promthep Cape"
+  ],
+  "porto": [
+    "Livraria Lello",
+    "Clerigos Tower",
+    "Ribeira",
+    "Porto Cathedral",
+    "Dom Luis I Bridge"
+  ],
+  "prague": [
+    "Charles Bridge",
+    "Prague Castle",
+    "Old Town Square",
+    "Astronomical Clock",
+    "St. Vitus Cathedral"
+  ],
+  "quebec city": [
+    "Old Quebec",
+    "Chateau Frontenac",
+    "Montmorency Falls",
+    "Plains of Abraham",
+    "La Citadelle de Quebec"
+  ],
+  "reykjavik": [
+    "Hallgrimskirkja",
+    "Harpa",
+    "Sun Voyager",
+    "Perlan",
+    "Blue Lagoon"
+  ],
+  "rio de janeiro": [
+    "Christ the Redeemer",
+    "Sugarloaf Mountain",
+    "Copacabana Beach",
+    "Ipanema Beach",
+    "Selaron Steps"
+  ],
+  "rome": [
+    "Colosseum",
+    "Roman Forum",
+    "Trevi Fountain",
+    "Pantheon",
+    "Vatican Museums"
+  ],
+  "salvador": [
+    "Pelourinho",
+    "Elevador Lacerda",
+    "Farol da Barra",
+    "Sao Francisco Church and Convent",
+    "Mercado Modelo"
+  ],
+  "san francisco": [
+    "Golden Gate Bridge",
+    "Alcatraz Island",
+    "Fishermans Wharf",
+    "Lombard Street",
+    "Chinatown"
+  ],
+  "santiago": [
+    "Cerro San Cristobal",
+    "Plaza de Armas",
+    "La Moneda Palace",
+    "Sky Costanera",
+    "Bellavista"
+  ],
+  "sao paulo": [
+    "Ibirapuera Park",
+    "Sao Paulo Cathedral",
+    "Paulista Avenue",
+    "Mercado Municipal de Sao Paulo",
+    "Pinacoteca de Sao Paulo"
+  ],
+  "seattle": [
+    "Space Needle",
+    "Pike Place Market",
+    "Chihuly Garden and Glass",
+    "Museum of Pop Culture",
+    "Kerry Park"
+  ],
+  "seoul": [
+    "Gyeongbokgung Palace",
+    "Bukchon Hanok Village",
+    "N Seoul Tower",
+    "Myeongdong",
+    "Changdeokgung Palace",
+    "Dongdaemun Design Plaza",
+    "Lotte World",
+    "Hongdae",
+    "Itaewon",
+    "National Museum of Korea"
+  ],
+  "seville": [
+    "Plaza de Espana",
+    "Royal Alcazar of Seville",
+    "Seville Cathedral",
+    "Metropol Parasol",
+    "Torre del Oro"
+  ],
+  "shanghai": [
+    "The Bund",
+    "Oriental Pearl Tower",
+    "Yu Garden",
+    "Shanghai Tower",
+    "Shanghai Museum"
+  ],
+  "shenzhen": [
+    "Window of the World",
+    "Splendid China Folk Village",
+    "OCT Loft",
+    "Dameisha Beach",
+    "Ping An Finance Centre"
+  ],
+  "singapore": [
+    "Gardens by the Bay",
+    "Marina Bay Sands SkyPark",
+    "Merlion Park",
+    "Singapore Botanic Gardens",
+    "Sentosa"
+  ],
+  "st petersburg": [
+    "State Hermitage Museum",
+    "Church of the Savior on Spilled Blood",
+    "Peterhof Palace",
+    "Saint Isaacs Cathedral",
+    "Nevsky Prospect"
+  ],
+  "stockholm": [
+    "Gamla Stan",
+    "Vasa Museum",
+    "Stockholm Palace",
+    "Skansen",
+    "ABBA The Museum"
+  ],
+  "suzhou": [
+    "Humble Administrators Garden",
+    "Tiger Hill",
+    "Suzhou Museum",
+    "Pingjiang Road",
+    "Lingering Garden"
+  ],
+  "sydney": [
+    "Sydney Opera House",
+    "Sydney Harbour Bridge",
+    "Bondi Beach",
+    "The Rocks",
+    "Taronga Zoo Sydney"
+  ],
+  "taipei": [
+    "Taipei 101",
+    "National Palace Museum",
+    "Chiang Kai-shek Memorial Hall",
+    "Longshan Temple",
+    "Shilin Night Market"
+  ],
+  "tokyo": [
+    "Sensō-ji",
+    "Tokyo Tower",
+    "Shibuya Scramble Crossing",
+    "Meiji Shrine",
+    "Tokyo Skytree"
+  ],
+  "toronto": [
+    "CN Tower",
+    "Royal Ontario Museum",
+    "Distillery District",
+    "Ripley Aquarium of Canada",
+    "Casa Loma"
+  ],
+  "valencia": [
+    "City of Arts and Sciences",
+    "Valencia Cathedral",
+    "La Lonja de la Seda",
+    "Central Market of Valencia",
+    "Turia Gardens"
+  ],
+  "vancouver": [
+    "Stanley Park",
+    "Capilano Suspension Bridge Park",
+    "Granville Island",
+    "Gastown",
+    "Vancouver Aquarium"
+  ],
+  "venice": [
+    "St. Marks Basilica",
+    "Doge's Palace",
+    "Grand Canal",
+    "Rialto Bridge",
+    "Piazza San Marco"
+  ],
+  "vienna": [
+    "Schonbrunn Palace",
+    "St. Stephens Cathedral",
+    "Belvedere Palace",
+    "Hofburg",
+    "Prater"
+  ],
+  "warsaw": [
+    "Old Town Warsaw",
+    "Royal Castle Warsaw",
+    "Lazienki Park",
+    "Palace of Culture and Science",
+    "Warsaw Uprising Museum"
+  ],
+  "washington dc": [
+    "National Mall",
+    "White House",
+    "Lincoln Memorial",
+    "Smithsonian National Museum of Natural History",
+    "United States Capitol"
+  ],
+  "wellington": [
+    "Te Papa Tongarewa",
+    "Wellington Cable Car",
+    "Mount Victoria Lookout",
+    "Weta Workshop",
+    "Cuba Street"
+  ],
+  "xian": [
+    "Terracotta Army",
+    "Xian City Wall",
+    "Muslim Quarter",
+    "Big Wild Goose Pagoda",
+    "Bell Tower of Xian"
+  ],
+  "yokohama": [
+    "Minato Mirai",
+    "Yokohama Chinatown",
+    "CupNoodles Museum Yokohama",
+    "Sankeien Garden",
+    "Yamashita Park"
+  ],
+  "zurich": [
+    "Lake Zurich",
+    "Old Town Zurich",
+    "Bahnhofstrasse",
+    "Grossmunster",
+    "Kunsthaus Zurich"
+  ]
+}
