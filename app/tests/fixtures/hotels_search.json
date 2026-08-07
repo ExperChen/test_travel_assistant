@@ -1,0 +1,137 @@
+{
+  "search_metadata": { "id": "fixture-hotels-search", "status": "Success" },
+  "search_parameters": {
+    "engine": "google_hotels",
+    "q": "Bali Resorts",
+    "check_in_date": "2026-04-08",
+    "check_out_date": "2026-04-09",
+    "adults": 2
+  },
+  "search_information": { "total_results": 15000 },
+  "brands": [
+    {
+      "id": 223,
+      "name": "Archipelago International",
+      "children": [
+        { "id": 229, "name": "Aston" },
+        { "id": 225, "name": "Favehotel" }
+      ]
+    }
+  ],
+  "ads": [
+    {
+      "name": "Kalyssa Beach Bungalows",
+      "source": "Booking.com",
+      "source_icon": "https://www.gstatic.com/travel-hotels/branding/icon_184.png",
+      "link": "https://www.google.com/aclk?sa=l&adurl=",
+      "property_token": "CgoIxLri6ry7-I5DEAE",
+      "gps_coordinates": { "latitude": -8.139593999999999, "longitude": 114.650266 },
+      "thumbnail": "https://lh4.googleusercontent.com/proxy/a=w273-h150-k-no",
+      "overall_rating": 4.8,
+      "reviews": 117,
+      "price": "$70",
+      "extracted_price": 70,
+      "amenities": ["Beach access", "Pool", "Kid-friendly"],
+      "free_cancellation": true
+    },
+    {
+      "name": "Puri Mangga Sea View Resort & Spa",
+      "source": "Booking.com",
+      "link": "https://www.google.com/aclk?sa=l&adurl=",
+      "property_token": "CgoI98f037uZvrIsEAE",
+      "gps_coordinates": { "latitude": -8.179466999999999, "longitude": 115.04557699999998 },
+      "hotel_class": 4,
+      "overall_rating": 4.6,
+      "reviews": 139,
+      "price": "$44",
+      "extracted_price": 44,
+      "amenities": ["Hot tub", "Spa", "Pool"],
+      "free_cancellation": true
+    }
+  ],
+  "properties": [
+    {
+      "type": "vacation rental",
+      "name": "Le Sabot Ubud",
+      "property_token": "ChoQ5YiTp-rKmO60ARoNL2cvMTFzc2djMTNqcRAC",
+      "gps_coordinates": { "latitude": -8.509249687194824, "longitude": 115.25045776367188 },
+      "check_in_time": "3:00 PM",
+      "check_out_time": "12:00 PM",
+      "rate_per_night": { "lowest": "$114", "extracted_lowest": 114 },
+      "total_rate": { "lowest": "$114", "extracted_lowest": 114 },
+      "prices": [
+        {
+          "source": "Vio.com",
+          "num_guests": 2,
+          "rate_per_night": { "lowest": "$114", "extracted_lowest": 114 }
+        }
+      ],
+      "nearby_places": [
+        {
+          "name": "I Gusti Ngurah Rai International Airport",
+          "transportations": [
+            { "type": "Taxi", "duration": "1 hr 9 min" },
+            { "type": "Public transport", "duration": "1 hr 40 min" }
+          ]
+        }
+      ],
+      "overall_rating": 4.4355693,
+      "reviews": 123,
+      "amenities": [
+        "Air conditioning",
+        "Kid-friendly",
+        "Kitchen",
+        "Outdoor pool",
+        "Free Wi-Fi",
+        "Washer",
+        "Crib"
+      ],
+      "excluded_amenities": ["No airport shuttle", "No beach access", "No fitness center"]
+    },
+    {
+      "type": "hotel",
+      "name": "COMO Uma Canggu",
+      "description": "Luxe hotel complex on the ocean, providing surf gear & classes for all ages.",
+      "link": "https://www.comohotels.com/umacanggu",
+      "property_token": "ChoIv6zen9HPwIu2ARoNL2cvMTFoOXhudHk0YhAB",
+      "gps_coordinates": { "latitude": -8.6546489, "longitude": 115.1258642 },
+      "check_in_time": "3:00 PM",
+      "check_out_time": "12:00 PM",
+      "rate_per_night": {
+        "lowest": "$198",
+        "extracted_lowest": 198,
+        "before_taxes_fees": "$165",
+        "extracted_before_taxes_fees": 165
+      },
+      "total_rate": {
+        "lowest": "$990",
+        "extracted_lowest": 990,
+        "before_taxes_fees": "$825",
+        "extracted_before_taxes_fees": 825
+      },
+      "deal_description": "Great Deal",
+      "hotel_class": "5-star hotel",
+      "extracted_hotel_class": 5,
+      "overall_rating": 4.7,
+      "reviews": 1554,
+      "reviews_breakdown": [
+        {
+          "name": "Nature",
+          "total_mentioned": 177,
+          "positive": 153,
+          "negative": 9,
+          "neutral": 15
+        }
+      ],
+      "amenities": [
+        "Free breakfast",
+        "Free Wi-Fi",
+        "Spa",
+        "Beach access",
+        "Restaurant",
+        "Room service"
+      ]
+    }
+  ],
+  "serpapi_pagination": { "current_from": 1, "current_to": 20, "next_page_token": "CBI=" }
+}

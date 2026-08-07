@@ -1,0 +1,10 @@
+{
+  "status": "1",
+  "info": "OK",
+  "infocode": "10000",
+  "results": [
+    { "origin_id": "1", "dest_id": "1", "distance": "12050", "duration": "2700" },
+    { "origin_id": "2", "dest_id": "1", "distance": "14320", "duration": "3100" },
+    { "origin_id": "3", "dest_id": "1", "info": "两点间无可行车道路", "code": "1" }
+  ]
+}

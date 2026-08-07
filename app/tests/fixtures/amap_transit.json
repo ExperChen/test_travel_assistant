@@ -1,0 +1,58 @@
+{
+  "status": "1",
+  "info": "OK",
+  "count": "3",
+  "route": {
+    "origin": "116.481499,39.990475",
+    "destination": "116.315063,39.999538",
+    "distance": "25000",
+    "taxi_cost": "82",
+    "transits": [
+      {
+        "cost": "6",
+        "duration": "3900",
+        "nightflag": "0",
+        "walking_distance": "1850",
+        "segments": [
+          {
+            "walking": { "distance": "850", "duration": "700" },
+            "bus": {
+              "buslines": [
+                {
+                  "departure_stop": { "name": "望京西站", "id": "s1", "location": "116.47,39.99" },
+                  "arrival_stop": { "name": "中关村站", "id": "s2", "location": "116.31,39.99" },
+                  "name": "地铁15号线(俸伯--清华东路西口)",
+                  "id": "l1",
+                  "type": "地铁线路",
+                  "distance": "20000",
+                  "duration": "2400",
+                  "start_time": "0530",
+                  "end_time": "2315",
+                  "via_num": "7"
+                }
+              ]
+            },
+            "entrance": { "name": "C 东南口", "location": "116.47,39.99" },
+            "exit": { "name": "A 西北口", "location": "116.31,39.99" }
+          },
+          {
+            "walking": { "distance": "1000", "duration": "800" },
+            "bus": {
+              "buslines": [
+                {
+                  "departure_stop": { "name": "六道口", "id": "s3", "location": "116.34,39.99" },
+                  "arrival_stop": { "name": "中关村", "id": "s4", "location": "116.31,39.99" },
+                  "name": "地铁10号线(内环)",
+                  "id": "l2",
+                  "type": "地铁线路",
+                  "distance": "4000",
+                  "duration": "600"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

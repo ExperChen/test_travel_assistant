@@ -1,0 +1,38 @@
+{
+  "search_metadata": { "id": "fixture-hotels-autocomplete", "status": "Success" },
+  "search_parameters": { "engine": "google_hotels_autocomplete", "q": "day inn" },
+  "suggestions": [
+    {
+      "position": 1,
+      "value": "Days Inn",
+      "type": "accommodation",
+      "thumbnail": "https://encrypted-tbn1.gstatic.com/images?q=tbn:ANd9GcRdCsoF2mNt1Bgzy5bZgkeSItkGy2pa4KLGJ9eP",
+      "autocomplete_suggestion": "day inn",
+      "kgmid": "/m/04558f",
+      "serpapi_google_hotels_link": "https://serpapi.com/search.json?engine=google_hotels&hl=en",
+      "serpapi_link": "https://serpapi.com/search.json?engine=google&kgmid=%2Fm%2F04558f&q=Days+Inn"
+    },
+    {
+      "position": 4,
+      "value": "Days Inn by Wyndham Washington DC/Connecticut Avenue",
+      "type": "accommodation",
+      "location": "4400 Connecticut Ave NW, Washington",
+      "thumbnail": "https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRGMMa8_GQe-HgeegrfQuGBnok24ALf",
+      "highlighted_words": ["washington", "dc"],
+      "autocomplete_suggestion": "day inn washington dc",
+      "kgmid": "/g/1hf8_s33q",
+      "data_cid": "242587712928378716",
+      "property_token": "ChgI3N7hv9WH9q4DGgwvZy8xaGY4X3MzM3EQAQ",
+      "serpapi_google_hotels_link": "https://serpapi.com/search.json?engine=google_hotels&property_token=ChgI3N7hv9WH9q4DGgwvZy8xaGY4X3MzM3EQAQ",
+      "serpapi_link": "https://serpapi.com/search.json?engine=google&kgmid=%2Fg%2F1hf8_s33q"
+    },
+    {
+      "position": 6,
+      "value": "day inn hotel near me",
+      "type": "accommodation",
+      "highlighted_words": ["hotel", "near", "me"],
+      "autocomplete_suggestion": "day inn hotel near me",
+      "serpapi_google_hotels_link": "https://serpapi.com/search.json?engine=google_hotels&q=day+inn+hotel+near+me"
+    }
+  ]
+}

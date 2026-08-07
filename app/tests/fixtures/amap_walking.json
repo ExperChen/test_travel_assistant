@@ -1,0 +1,28 @@
+{
+  "status": "1",
+  "info": "OK",
+  "count": "1",
+  "route": {
+    "origin": "116.434307,39.90909",
+    "destination": "116.434446,39.90816",
+    "paths": [
+      {
+        "distance": "147",
+        "duration": "126",
+        "steps": [
+          {
+            "instruction": "步行77米后右转",
+            "road": "阜荣街",
+            "distance": "77",
+            "orientation": "东",
+            "duration": "66",
+            "polyline": "116.434,39.909;116.434,39.908",
+            "action": "右转",
+            "assistant_action": "到达目的地",
+            "walk_type": "0"
+          }
+        ]
+      }
+    ]
+  }
+}

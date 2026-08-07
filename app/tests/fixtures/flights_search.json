@@ -1,0 +1,115 @@
+{
+  "search_metadata": { "id": "fixture-flights-search", "status": "Success" },
+  "best_flights": [
+    {
+      "flights": [
+        {
+          "departure_airport": {
+            "name": "John F. Kennedy International Airport",
+            "id": "JFK",
+            "time": "2026-08-10 08:30"
+          },
+          "arrival_airport": {
+            "name": "Haneda Airport",
+            "id": "HND",
+            "time": "2026-08-11 12:45"
+          },
+          "duration": 855,
+          "airplane": "Boeing 777",
+          "airline": "ANA",
+          "airline_logo": "https://www.gstatic.com/flights/airline_logos/70px/NH.png",
+          "travel_class": "Economy",
+          "flight_number": "NH 107",
+          "legroom": "32 in",
+          "overnight": true,
+          "extensions": [
+            "Above average legroom (32 in)",
+            "Wi-Fi for a fee",
+            "In-seat power & USB outlets",
+            "On-demand video",
+            "Carbon emissions estimate: 902 kg"
+          ]
+        }
+      ],
+      "layovers": [],
+      "total_duration": 855,
+      "carbon_emissions": {
+        "this_flight": 902000,
+        "typical_for_this_route": 950000,
+        "difference_percent": -5
+      },
+      "price": 1820,
+      "type": "Round trip",
+      "airline_logo": "https://www.gstatic.com/flights/airline_logos/70px/NH.png",
+      "departure_token": "abc123=="
+    },
+    {
+      "flights": [
+        {
+          "departure_airport": { "name": "JFK", "id": "JFK", "time": "2026-08-10 10:15" },
+          "arrival_airport": { "name": "SFO", "id": "SFO", "time": "2026-08-10 13:35" },
+          "duration": 320,
+          "airplane": "Airbus A321",
+          "airline": "United",
+          "travel_class": "Economy",
+          "flight_number": "UA 456",
+          "legroom": "31 in",
+          "extensions": [
+            "Average legroom (31 in)",
+            "Wi-Fi for a fee",
+            "Carbon emissions estimate: 210 kg"
+          ]
+        },
+        {
+          "departure_airport": { "name": "SFO", "id": "SFO", "time": "2026-08-10 17:00" },
+          "arrival_airport": { "name": "HND", "id": "HND", "time": "2026-08-11 21:30" },
+          "duration": 690,
+          "airplane": "Boeing 787",
+          "airline": "United",
+          "travel_class": "Economy",
+          "flight_number": "UA 875",
+          "legroom": "31 in",
+          "overnight": true,
+          "extensions": [
+            "Average legroom (31 in)",
+            "On-demand video",
+            "Carbon emissions estimate: 688 kg"
+          ]
+        }
+      ],
+      "layovers": [
+        { "duration": 205, "name": "San Francisco International Airport", "id": "SFO" }
+      ],
+      "total_duration": 1215,
+      "carbon_emissions": {
+        "this_flight": 898000,
+        "typical_for_this_route": 950000,
+        "difference_percent": -5
+      },
+      "price": 1560,
+      "type": "Round trip",
+      "airline_logo": "https://www.gstatic.com/flights/airline_logos/70px/UA.png",
+      "departure_token": "def456=="
+    }
+  ],
+  "other_flights": [
+    {
+      "flights": [
+        {
+          "departure_airport": { "name": "JFK", "id": "JFK", "time": "2026-08-10 23:55" },
+          "arrival_airport": { "name": "HND", "id": "HND", "time": "2026-08-12 06:20" },
+          "duration": 990,
+          "airline": "Delta",
+          "travel_class": "Economy",
+          "flight_number": "DL 999",
+          "extensions": []
+        }
+      ],
+      "layovers": [],
+      "total_duration": 990,
+      "price": null,
+      "type": "Round trip",
+      "departure_token": "ghi789=="
+    }
+  ]
+}

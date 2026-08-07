@@ -1,0 +1,79 @@
+{
+  "status": "1",
+  "info": "OK",
+  "infocode": "10000",
+  "count": "4",
+  "pois": [
+    {
+      "name": "西湖风景名胜区",
+      "id": "B0FFFABGHR",
+      "parent": "",
+      "location": "120.156209,30.274648",
+      "distance": "",
+      "type": "风景名胜;风景名胜;风景名胜",
+      "typecode": "110000",
+      "pname": "浙江省",
+      "cityname": "杭州市",
+      "adname": "西湖区",
+      "address": "龙井路1号",
+      "pcode": "330000",
+      "citycode": "0571",
+      "adcode": "330106",
+      "business": {
+        "business_area": "西湖景区",
+        "opentime_today": "全天开放",
+        "opentime_week": "全年 全天开放",
+        "tel": "0571-87179613",
+        "rating": "4.9",
+        "cost": "免费"
+      },
+      "navi": {
+        "navi_poiid": "BV10005890",
+        "entr_location": "120.148000,30.259000",
+        "exit_location": "120.149000,30.260000"
+      },
+      "photos": [
+        { "title": "西湖", "url": "https://store.is.autonavi.com/showpic/xihu.jpg" }
+      ]
+    },
+    {
+      "name": "太子湾公园",
+      "id": "B0FFFAB8G6",
+      "location": "120.144412,30.229475",
+      "type": "风景名胜;公园广场;公园",
+      "typecode": "110101",
+      "pname": "浙江省",
+      "cityname": "杭州市",
+      "adname": "西湖区",
+      "address": "南山路5-1号",
+      "business": { "rating": "4.7", "cost": "免费", "opentime_today": "07:00-17:00" },
+      "photos": []
+    },
+    {
+      "name": "雷峰塔景区",
+      "id": "B0FFF8K3VZ",
+      "location": "120.170687,30.231580",
+      "type": "风景名胜;风景名胜;风景名胜",
+      "typecode": "110000",
+      "pname": "浙江省",
+      "cityname": "杭州市",
+      "adname": "西湖区",
+      "address": "南山路15号",
+      "business": {
+        "rating": "4.6",
+        "cost": "40",
+        "opentime_today": "08:00-20:00",
+        "tel": "0571-87982111"
+      },
+      "photos": [{ "title": "雷峰塔", "url": "https://store.is.autonavi.com/showpic/leifeng.jpg" }]
+    },
+    {
+      "name": "没有坐标的脏数据",
+      "id": "B0BROKEN01",
+      "location": "",
+      "type": "风景名胜;风景名胜;风景名胜",
+      "typecode": "110000",
+      "business": { "rating": "", "cost": "" }
+    }
+  ]
+}

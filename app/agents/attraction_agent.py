@@ -1,702 +1,373 @@
-"""LangChain Attraction sub-agent for recommendations and attraction details."""
+"""景点召回、打分与筛选（架构文档 §5.3）。
+
+召回与详情补全是 IO，打分与筛选是纯函数——后者单独可测，不需要 mock 任何东西。
+"""
 
 from __future__ import annotations
 
-import argparse
-import json
-import os
-import re
-import sys
-from pathlib import Path
-from typing import Any
+from app.agents.route_planner import DAY_TRIP_RADIUS_M
+from app.core.geo import centroid, haversine_m
+from app.core.logging import get_logger
+from app.models.attraction import DEFAULT_STAY_MINUTES, Attraction
+from app.models.common import CityRef, GeoPoint
+from app.models.errors import PlanWarning
+from app.models.trip import Pace
+from app.tools.amap_poi import poi_detail, poi_keyword
 
-from dotenv import load_dotenv
-from langchain.agents import create_agent
-from langchain.tools import tool
-from langchain_google_genai import ChatGoogleGenerativeAI
-from pydantic import BaseModel, Field
+log = get_logger(__name__)
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
+__all__ = [
+    "recall_attractions",
+    "recall_with_report",
+    "looks_like_match",
+    "score_attractions",
+    "select_attractions",
+    "enrich_entrances",
+    "attractions_centroid",
+    "is_sub_area",
+    "stay_minutes",
+    "type_weight",
+    "TYPE_WEIGHTS",
+]
 
-from app.tools.attraction_tool import (  # noqa: E402
-    clean_opening_hours,
-    get_attraction_info,
-    get_attractions_by_place,
-    is_valid_opening_hours,
-)
+RECALL_PAGES = 2
+RECALL_PAGE_SIZE = 25
+"""types-only 搜索取前 2 页 = 50 条按知名度排序的候选，足够 20 个名额挑。"""
 
+MAX_POOL = 60
+MAX_SELECTED = 20
+PER_DAY_CANDIDATES = 4
 
-_CITY_RECOMMENDATION_SEEDS: dict[str, list[str]] = {
-    "beijing": [
-        "Forbidden City",
-        "Temple of Heaven",
-        "Summer Palace",
-        "Mutianyu Great Wall",
-    ],
-    "北京": [
-        "Forbidden City",
-        "Temple of Heaven",
-        "Summer Palace",
-        "Mutianyu Great Wall",
-    ],
-    "kuala lumpur, malaysia": [
-        "Petronas Twin Towers",
-        "KL Tower",
-        "Batu Caves",
-        "Central Market",
-    ],
-    "pattaya": [
-        "The Sanctuary of Truth",
-        "Pattaya Floating Market",
-        "Big Buddha Temple",
-        "Nong Nooch Tropical Garden",
-    ],
-    "bangkok": [
-        "The Grand Palace",
-        "Wat Pho",
-        "Wat Arun",
-        "Chatuchak Weekend Market",
-    ],
-    "shanghai": [
-        "The Bund",
-        "Oriental Pearl Tower",
-        "Yu Garden",
-        "Shanghai Tower",
-    ],
-    "上海": [
-        "The Bund",
-        "Oriental Pearl Tower",
-        "Yu Garden",
-        "Shanghai Tower",
-    ],
-    "penang, malaysia": [
-        "Penang Hill",
-        "Chew Jetty",
-        "Kek Lok Si Temple",
-        "Armenian Street",
-    ],
+# 打分权重（架构文档 §5.3）
+#
+# 权重是实测调过的。最初是 rating .40 / type .30 / distance .20 / completeness .10，
+# 在杭州跑出来把西湖排到第 6，前面全是崇一堂、江堤步道这类冷门 POI——因为高德的
+# 评分普遍挤在 4.2~4.9 区分不开，而"距市中心"在很多中国城市指向的是 CBD 而不是
+# 旅游核心区。真正的解法不在权重而在召回（见 recall_attractions）：换成 types-only
+# 检索后，recall_rank 才成为可信的知名度信号，于是让它主导排序。
+W_POPULARITY = 0.35
+W_RATING = 0.25
+W_TYPE = 0.15
+W_DISTANCE = 0.15
+W_COMPLETENESS = 0.10
+
+RANK_HORIZON = 30
+"""知名度排序前 30 名之外区分度就很低了。"""
+
+UNRANKED_POPULARITY = 0.30
+"""没有名次的候选（例如只由必去检索带进来的）：压一档，但不至于直接出局。"""
+
+TYPE_WEIGHTS: dict[str, float] = {
+    "110201": 1.00,  # 世界遗产
+    "110000": 0.95,  # 风景名胜
+    "110202": 0.92,  # 全国重点文物保护单位
+    "110200": 0.90,  # 文物古迹
+    "110105": 0.85,  # 园林
+    "110301": 0.85,  # 博物馆
+    "110300": 0.85,  # 博物馆大类
+    "110303": 0.80,  # 美术馆
+    "110102": 0.80,  # 主题公园
+    "110302": 0.75,  # 展览馆
+    "110500": 0.75,  # 宗教场所
+    "110100": 0.75,  # 公园
+    "110101": 0.75,  # 城市公园
+    "110103": 0.70,  # 植物园
+    "110104": 0.70,  # 动物园
+    "110400": 0.70,  # 纪念馆
+    "110600": 0.60,  # 剧院
+    "190101": 0.40,  # 度假村
 }
-
-_CITY_NAME_ALIASES: dict[str, str] = {
-    "北京": "Beijing",
-    "beijing": "Beijing",
-    "上海": "Shanghai",
-    "shanghai": "Shanghai",
-    "芭堤雅": "Pattaya",
-    "芭提雅": "Pattaya",
-    "pattaya": "Pattaya",
-    "曼谷": "Bangkok",
-    "bangkok": "Bangkok",
-    "吉隆坡": "Kuala Lumpur, Malaysia",
-    "kuala lumpur": "Kuala Lumpur, Malaysia",
-    "槟城": "Penang, Malaysia",
-    "檳城": "Penang, Malaysia",
-    "penang": "Penang, Malaysia",
-    "乔治城": "George Town, Penang, Malaysia",
-    "喬治城": "George Town, Penang, Malaysia",
-    "george town": "George Town, Penang, Malaysia",
-}
-
-
-@tool
-def attraction_recommendation_tool(city: str, query_hint: str = "") -> dict[str, Any]:
-    """Return attraction candidates by city."""
-    attractions = get_attractions_by_place(place=city, query_type=query_hint or None)
-    return {
-        "city": city,
-        "attractions": attractions,
-        "sources": [
-            item.get("source_link", "")
-            for item in attractions
-            if isinstance(item, dict) and item.get("source_link")
-        ],
-    }
-
-
-@tool
-def attraction_detail_tool(attraction_name: str, location: str = "") -> dict[str, Any]:
-    """Return attraction details by attraction name and optional location."""
-    return get_attraction_info(attraction_name=attraction_name, location=location or None)
-
-
-def _canonicalize_city_name(text: str) -> str:
-    city = str(text or "").strip()
-    if not city:
-        return ""
-    return _CITY_NAME_ALIASES.get(city.lower(), _CITY_NAME_ALIASES.get(city, city))
-
-
-def _normalize_city(text: str) -> str:
-    query = str(text or "").strip()
-    if not query:
-        return ""
-
-    normalized = query.lower()
-    if "george town" in normalized or "乔治城" in query or "喬治城" in query:
-        return "George Town, Penang, Malaysia"
-
-    patterns = [
-        r"top attractions in\s+([A-Za-z\s\-,'\.]+)",
-        r"attractions in\s+([A-Za-z\s\-,'\.]+)",
-        r"([A-Za-z\s\-,'\.]+)\s+attractions",
-        r"([\u4e00-\u9fffA-Za-z\s\-,'\.]+?)\s*(?:有什么好玩的景点|有什么值得去的景点|景点推荐|推荐景点)",
-    ]
-
-    for pattern in patterns:
-        match = re.search(pattern, query, re.IGNORECASE)
-        if match:
-            return _canonicalize_city_name(match.group(1).strip(" .,!，。"))
-
-    cleaned = re.sub(
-        r"(有什么好玩的景点|有什么值得去的景点|景点推荐|推荐景点|attractions?|things to do|top attractions in)",
-        "",
-        query,
-        flags=re.IGNORECASE,
-    )
-    return _canonicalize_city_name(cleaned.strip(" .,!，。"))
-
-
-def _is_recommendation_query(query: str) -> bool:
-    text = str(query or "").lower()
-    recommendation_tokens = [
-        "有什么好玩的景点",
-        "有什么值得去的景点",
-        "景点推荐",
-        "推荐景点",
-        "top attractions",
-        "things to do",
-        "attractions in",
-        "attractions",
-    ]
-    if any(token in text for token in recommendation_tokens):
-        return True
-    return any(token in query for token in ["景点", "好玩", "值得去"])
-
-
-def _is_detail_query(query: str) -> bool:
-    lowered = str(query or "").lower()
-    return any(token in lowered for token in ["ticket", "price", "门票", "開放", "开放", "hours", "营业"])
-
-
-def _extract_detail_target(query: str) -> tuple[str, str]:
-    text = str(query or "").strip()
-    if not text:
-        return "", ""
-
-    location_hint = ""
-    lowered = text.lower()
-    if "penang" in lowered or "槟城" in text or "檳城" in text:
-        location_hint = "Penang, Malaysia"
-    elif "beijing" in lowered or "北京" in text:
-        location_hint = "Beijing"
-    elif "kuala lumpur" in lowered or "吉隆坡" in text:
-        location_hint = "Kuala Lumpur, Malaysia"
-
-    cleaned = re.sub(
-        r"(门票多少钱|門票多少錢|ticket\s*price|admission\s*fee|how much|开放时间|開放時間|opening\s*hours|营业时间|營業時間|visit duration|游玩时长|建議游玩时长)",
-        "",
-        text,
-        flags=re.IGNORECASE,
-    )
-    cleaned = re.sub(r"[?？,，。!]", " ", cleaned)
-    cleaned = re.sub(r"\s+", " ", cleaned).strip()
-
-    if " " in cleaned and any(word in cleaned.lower() for word in ["ticket", "opening", "hours", "price"]):
-        cleaned = cleaned.split(" ")[0].strip()
-
-    return cleaned or text, location_hint
-
-
-def _clean_ticket_price(value: Any) -> str:
-    text = str(value or "").strip()
-    if not text:
-        return ""
-
-    lowered = text.lower()
-    blocked = ["estimated", "unknown", "official price not found", "none", "null", "maybe"]
-    if any(token in lowered for token in blocked):
-        return ""
-    if lowered == "free":
-        return "Free"
-
-    if re.search(r"\bRM\b", text, re.IGNORECASE):
-        return text.replace("--", "-").replace("MYR", "RM").strip()
-    if re.search(r"\b(THB|MYR|USD|SGD|HKD|CNY|JPY|EUR)\b", text, re.IGNORECASE):
-        return re.sub(r"\s+", " ", text).strip()
-    if re.search(r"[¥฿$€]", text):
-        return re.sub(r"\s+", " ", text).strip()
-    return ""
-
-
-def _compact_description(text: Any) -> str:
-    content = str(text or "").strip()
-    if not content:
-        return ""
-    content = re.sub(r"\s+", " ", content)
-    return content[:220].rstrip()
-
-
-def _normalize_opening_hours(value: Any) -> str:
-    raw = str(value or "").strip()
-    if not raw:
-        return ""
-    cleaned = clean_opening_hours(raw)
-    if cleaned and is_valid_opening_hours(cleaned):
-        return cleaned
-    return ""
-
-
-def _clean_candidate_name(name: str) -> str:
-    text = str(name or "").strip()
-    if not text:
-        return ""
-
-    text = re.split(r"\s[-|–:]\s", text)[0].strip()
-    text = re.sub(r"^(在鄰近地區|在邻近地区|附近|nearby)[:：\s]*", "", text, flags=re.IGNORECASE)
-    text = re.sub(r"^\d+\s*", "", text)
-
-    blocked_patterns = [
-        r"\d+\s*[大个個]?\s*景点",
-        r"必做事项",
-        r"things to do",
-        r"places to visit",
-        r"historical landmarks|historical sites",
-        r"landmark tours|tour package",
-        r"ultimate guide",
-        r"终极指南|終極指南",
-        r"旅游指南|旅遊指南",
-        r"自由行|必去|必玩",
-        r"景點推薦|景点推荐",
-        r"熱門旅遊景點|热门旅游景点",
-        r"一日遊行程|一日游行程",
-        r"親子好去處|亲子好去处|親子遊景點推薦|亲子游景点推荐",
-        r"旅遊攻略|旅游攻略|攻略",
-        r"游览观光|遊覽觀光",
-        r"top\s*\d+",
-        r"the\s+\d+\s+best",
-        r"best attractions",
-        r"tourist attractions",
-        r"must-see attractions|must see attractions|must visit attractions",
-        r"discover the",
-        r"beautiful sights|sights\s*&\s*attractions|sights\s+and\s+attractions",
-        r"guide to|where to go|what to do|nearby attractions|is there much to do|top recommendations",
-        r"\btours?\b$|^ep\d+\b",
-        r"景点玩乐|景點玩樂",
-        r"washington|華盛頓",
-        r"【\s*20\d{2}.*】",
-        r"\bairplane\b|\bmilestone\b|\bmonument\b|\bmemorial\b|\bstation\b",
-    ]
-    lowered = text.lower()
-    if any(re.search(pat, lowered, re.IGNORECASE) for pat in blocked_patterns):
-        return ""
-
-    if len(text) < 3:
-        return ""
-    return text
-
-
-def _seed_recommendation_candidates(city: str, candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    seeded = [dict(item) for item in candidates if isinstance(item, dict)]
-    existing = {str(item.get("name", "")).strip().lower() for item in seeded if isinstance(item, dict)}
-
-    if len(seeded) < 2 and ("george town" in city.lower() or "penang" in city.lower()):
-        for seed in ["Penang Hill", "Chew Jetty", "Kek Lok Si Temple", "Armenian Street"]:
-            if seed.lower() not in existing:
-                seeded.append({"name": seed, "brief_description": "", "source_link": ""})
-                existing.add(seed.lower())
-
-    city_seed_names = _CITY_RECOMMENDATION_SEEDS.get(city.lower(), []) or _CITY_RECOMMENDATION_SEEDS.get(city, [])
-    if len(seeded) < 2 and city_seed_names:
-        for seed in city_seed_names:
-            if seed.lower() not in existing:
-                seeded.append({"name": seed, "brief_description": "", "source_link": ""})
-                existing.add(seed.lower())
-
-    return seeded
-
-
-def _needs_recommendation_enrichment(item: dict[str, Any]) -> bool:
-    description = _compact_description(item.get("description") or item.get("brief_description"))
-    image = str(item.get("image") or item.get("image_url") or "").strip()
-    ticket_price = _clean_ticket_price(item.get("ticket_price"))
-    return not all([description, image, ticket_price])
-
-
-def _merge_recommendation_detail(candidate: dict[str, Any], detail: dict[str, Any]) -> dict[str, Any]:
-    merged = dict(candidate)
-    if not _compact_description(merged.get("description") or merged.get("brief_description")):
-        merged["description"] = _compact_description(detail.get("description"))
-    if not str(merged.get("image") or merged.get("image_url") or "").strip():
-        merged["image"] = str(detail.get("image_url") or detail.get("image") or "").strip()
-    if not _clean_ticket_price(merged.get("ticket_price")):
-        merged["ticket_price"] = _clean_ticket_price(detail.get("ticket_price"))
-    if not merged.get("source_link") and str(detail.get("source_link") or "").strip():
-        merged["source_link"] = str(detail.get("source_link") or "").strip()
-    detail_sources = detail.get("sources") or []
-    if not merged.get("source_link") and isinstance(detail_sources, list):
-        for src in detail_sources:
-            if isinstance(src, dict):
-                link = str(src.get("link", "")).strip()
-            else:
-                link = str(src).strip()
-            if link:
-                merged["source_link"] = link
-                break
-    return merged
-
-
-def _enrich_recommendation_candidates(city: str, candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    enriched: list[dict[str, Any]] = []
-
-    for index, item in enumerate(candidates):
-        candidate = dict(item)
-        if index < 5 and _needs_recommendation_enrichment(candidate):
-            try:
-                detail = get_attraction_info(
-                    attraction_name=str(candidate.get("name", "")).strip(),
-                    location=city or None,
-                )
-            except Exception:
-                detail = {}
-            if isinstance(detail, dict):
-                candidate = _merge_recommendation_detail(candidate, detail)
-        enriched.append(candidate)
-
-    return enriched
-
-
-def _normalize_recommendation_candidate(item: dict[str, Any]) -> tuple[dict[str, str] | None, str]:
-    if not isinstance(item, dict):
-        return None, ""
-
-    raw_name = item.get("name", "")
-    name = _clean_candidate_name(raw_name)
-    if not name:
-        return None, ""
-
-    description = _compact_description(item.get("description") or item.get("brief_description"))
-    image = str(item.get("image") or item.get("image_url") or "").strip()
-    ticket_price = _clean_ticket_price(item.get("ticket_price"))
-    source_link = str(item.get("source_link") or "").strip()
-
-    return (
-        {
-            "name": name,
-            "description": description,
-            "image": image,
-            "ticket_price": ticket_price,
-        },
-        source_link,
-    )
-
-
-def _build_recommendation_from_city(city: str, query: str) -> dict[str, Any]:
-    candidates = _seed_recommendation_candidates(
-        city=city,
-        candidates=get_attractions_by_place(place=city, query_type=query),
-    )
-    candidates = _enrich_recommendation_candidates(city=city, candidates=candidates)
-
-    attractions: list[dict[str, str]] = []
-    sources: list[str] = []
-    seen_names: set[str] = set()
-
-    for item in candidates:
-        normalized_item, source_link = _normalize_recommendation_candidate(item)
-        if not normalized_item:
-            continue
-        name = normalized_item["name"]
-        key = name.lower()
-        if key in seen_names:
-            continue
-        seen_names.add(key)
-        attractions.append(normalized_item)
-        if source_link:
-            sources.append(source_link)
-        if len(attractions) >= 8:
-            break
-
-    deduped_sources: list[str] = []
-    seen_source: set[str] = set()
-    for src in sources:
-        if src in seen_source:
-            continue
-        seen_source.add(src)
-        deduped_sources.append(src)
-
-    return {
-        "query_type": "attraction_recommendation",
-        "city": city,
-        "attractions": attractions,
-        "sources": deduped_sources[:10],
-    }
-
-
-def _extract_json_object(text: str) -> dict[str, Any]:
-    """Extract a JSON object from model text."""
-    text = (text or "").strip()
-    if not text:
-        return {}
-
-    try:
-        parsed = json.loads(text)
-        if isinstance(parsed, dict):
-            return parsed
-    except json.JSONDecodeError:
-        pass
-
-    start = text.find("{")
-    end = text.rfind("}")
-    if start == -1 or end == -1 or end <= start:
-        return {}
-
-    try:
-        parsed = json.loads(text[start : end + 1])
-        return parsed if isinstance(parsed, dict) else {}
-    except json.JSONDecodeError:
-        return {}
-
-
-def _content_to_text(content: Any) -> str:
-    if isinstance(content, str):
-        return content
-
-    if isinstance(content, list):
-        chunks: list[str] = []
-        for item in content:
-            if isinstance(item, str):
-                chunks.append(item)
-                continue
-            if isinstance(item, dict):
-                text = item.get("text") or item.get("output_text") or ""
-                if text:
-                    chunks.append(str(text))
-        return "\n".join(chunks).strip()
-
-    if isinstance(content, dict):
-        text = content.get("text") or content.get("output_text") or ""
-        if text:
-            return str(text).strip()
-
-    return str(content or "").strip()
-
-
-def _extract_payload_from_output(output: Any) -> dict[str, Any]:
-    text = _content_to_text(output)
-    if not text:
-        return {}
-
-    if "```" in text:
-        lines = [line for line in text.splitlines() if not line.strip().startswith("```")]
-        text = "\n".join(lines).strip()
-
-    payload = _extract_json_object(text)
-    if payload:
-        return payload
-
-    return _extract_json_object(json.dumps(output, ensure_ascii=False))
-
-
-def _normalize_recommendation(payload: dict[str, Any]) -> dict[str, Any]:
-    city = str(payload.get("city", "")).strip()
-
-    raw_attractions = payload.get("attractions", [])
-    if not isinstance(raw_attractions, list):
-        raw_attractions = []
-
-    normalized_attractions: list[dict[str, str]] = []
-    for item in raw_attractions:
-        if isinstance(item, dict):
-            raw_name = str(item.get("name", "")).strip()
-            name = _clean_candidate_name(raw_name) or raw_name
-            description = _compact_description(item.get("description"))
-            image = str(item.get("image") or item.get("image_url") or "").strip()
-            ticket_price = _clean_ticket_price(item.get("ticket_price"))
-        else:
-            raw_name = str(item).strip()
-            name = _clean_candidate_name(raw_name) or raw_name
-            description = ""
-            image = ""
-            ticket_price = ""
-        if name:
-            normalized_attractions.append(
-                {
-                    "name": name,
-                    "description": description,
-                    "image": image,
-                    "ticket_price": ticket_price,
-                }
-            )
-
-    raw_sources = payload.get("sources", [])
-    if not isinstance(raw_sources, list):
-        raw_sources = []
-    sources = [str(src).strip() for src in raw_sources if str(src).strip()]
-
-    return {
-        "query_type": "attraction_recommendation",
-        "city": city,
-        "attractions": normalized_attractions,
-        "sources": sources,
-    }
-
-
-def _normalize_info(payload: dict[str, Any]) -> dict[str, Any]:
-    raw_sources = payload.get("sources", [])
-    if not isinstance(raw_sources, list):
-        raw_sources = []
-
-    sources: list[str] = []
-    for src in raw_sources:
-        if isinstance(src, dict):
-            link = str(src.get("link", "")).strip()
-            if link:
-                sources.append(link)
-        else:
-            text = str(src).strip()
-            if text:
-                sources.append(text)
-
-    description = _compact_description(payload.get("description"))
-    image = str(payload.get("image") or payload.get("image_url") or "").strip()
-    opening_hours = _normalize_opening_hours(payload.get("opening_hours"))
-    visit_duration = str(payload.get("visit_duration") or "").strip()
-    ticket_price = _clean_ticket_price(payload.get("ticket_price"))
-    ticket_status = str(payload.get("ticket_status") or "").strip().lower() or ("free" if ticket_price == "Free" else "unknown")
-    price_note = str(payload.get("price_note") or "").strip()
-
-    return {
-        "query_type": "attraction_info",
-        "name": str(payload.get("name", "")).strip(),
-        "description": description,
-        "image": image,
-        "opening_hours": opening_hours,
-        "visit_duration": visit_duration,
-        "ticket_price": ticket_price,
-        "ticket_status": ticket_status,
-        "price_note": price_note,
-        "sources": sources,
-    }
-
-
-def _is_placeholder_api_key(value: str) -> bool:
-    normalized = value.strip()
-    if not normalized:
-        return True
-
-    upper_value = normalized.upper()
-    return upper_value.startswith("YOUR_") or "PLACEHOLDER" in upper_value
-
-
-def _resolve_google_config() -> tuple[str, str]:
-    load_dotenv()
-    api_key = os.getenv("GOOGLE_API_KEY", "").strip()
-    model = os.getenv("GOOGLE_LLM_MODEL", "gemini-1.5-flash").strip() or "gemini-1.5-flash"
-    if _is_placeholder_api_key(api_key):
-        raise ValueError(
-            "Missing valid google model config. Set GOOGLE_API_KEY in .env."
+DEFAULT_TYPE_WEIGHT = 0.50
+
+NEUTRAL_RATING_SCORE = 0.5
+"""没有评分的 POI 给中位分——直接给 0 会把没被评过分的冷门好去处一律埋掉。"""
+
+FAR_AWAY_M = 30000.0
+"""距离得分的归一化上限：离市中心 30km 以上都算"远"。"""
+
+
+# --------------------------------------------------------------------------
+# 召回（IO）
+# --------------------------------------------------------------------------
+MATCH_THRESHOLD = 0.6
+"""必去景点名与 POI 名的字符重合度下限。"""
+
+
+def looks_like_match(query: str, poi_name: str) -> bool:
+    """用户报的名字和搜到的 POI 是不是一回事。
+
+    **高德对任何关键词都会模糊返回一条**，实测：
+        「不存在的地方xyz」→「四川省成都市新津区兴义镇」
+        「zzzqqq不可能存在」→「不可方物」
+    所以"搜到了就算命中"等于没有校验，`MUST_VISIT_NOT_FOUND` 永远不会触发。
+
+    用字符集重合度而不是子串：中文景点的官方名常带后缀或插字，
+    「大熊猫基地」的正式名是「成都大熊猫繁育研究基地」，子串匹配会漏掉。
+    """
+    q = {c for c in query.strip().lower() if not c.isspace()}
+    if not q:
+        return False
+    overlap = len(q & set(poi_name.lower())) / len(q)
+    return overlap >= MATCH_THRESHOLD
+
+
+async def recall_attractions(
+    city: CityRef,
+    *,
+    must_visit: list[str] | None = None,
+    pages: int = RECALL_PAGES,
+    client=None,
+    _missing: list[str] | None = None,
+) -> list[Attraction]:
+    """召回候选景点，按 poi_id 去重。
+
+    `_missing` 是给 `recall_with_report` 收集"没搜到的必去景点"用的出参，
+    调用方通常不用管。
+
+    **只按 types 搜、不传 keywords** —— 这是实测得出的关键。杭州对照实验：
+
+        types-only：  千岛湖 → 西湖 → 西溪湿地 → 灵隐寺 → 飞来峰 → 雷峰塔
+        keywords=景点：钱江世纪公园 → 清河坊 → 钱江新城灯光秀 → 五柳巷 …
+
+    传 keywords 时高德做的是文本匹配，会把名字里带"景点"的和搜索区域中心附近的
+    POI 捞上来；不传 keywords 时才按 POI 权重（知名度）排序。周边搜索同理，
+    `sortrule` 无论取 distance 还是 weight，返回的都是行政中心（往往是 CBD）
+    附近的东西，对"这个城市值得去哪"毫无帮助，因此不再参与召回。
+
+    必去景点走关键字精确检索——那种场景下文本匹配正是我们要的。
+    """
+    missing = _missing if _missing is not None else []
+    pool: dict[str, Attraction] = {}
+
+    for page in range(1, pages + 1):
+        results = await poi_keyword(
+            region=city.name,
+            city_limit=True,
+            page_size=RECALL_PAGE_SIZE,
+            page_num=page,
+            client=client,
         )
-    return api_key, model
+        if not results:
+            break
+        for offset, poi in enumerate(results):
+            rank = (page - 1) * RECALL_PAGE_SIZE + offset
+            pool.setdefault(poi.poi_id, poi.model_copy(update={"recall_rank": rank}))
+
+    for name in must_visit or []:
+        matches = await poi_keyword(name, region=city.name, city_limit=True, client=client)
+        matches = [m for m in matches if looks_like_match(name, m.name)]
+        if not matches:
+            # 不能用 "name" 做 extra 的键——它是 LogRecord 的保留字段，会抛 KeyError
+            log.warning("必去景点没搜到", extra={"spot": name, "city": city.name})
+            missing.append(name)
+            continue
+        existing = pool.get(matches[0].poi_id)
+        hit = (existing or matches[0]).model_copy(update={"must_visit": True})
+        pool[hit.poi_id] = hit
+
+    return list(pool.values())
 
 
-def _build_executor() -> Any:
-    api_key, model = _resolve_google_config()
-    llm = ChatGoogleGenerativeAI(
-        model=model,
-        api_key=api_key,
-        temperature=0,
+async def recall_with_report(
+    city: CityRef,
+    *,
+    must_visit: list[str] | None = None,
+    pages: int = RECALL_PAGES,
+    client=None,
+) -> tuple[list[Attraction], list[PlanWarning]]:
+    """`recall_attractions` + 必去景点没搜到时的告警。
+
+    用户点名要去的地方**悄悄消失**是最糟的失败方式——他会拿到一份看起来正常
+    的行程，直到出发前才发现没安排。宁可多说一句。
+    """
+    missing: list[str] = []
+    pool = await recall_attractions(
+        city, must_visit=must_visit, pages=pages, client=client, _missing=missing
     )
+    if not missing:
+        return pool, []
 
-    tools = [attraction_recommendation_tool, attraction_detail_tool]
-    system_prompt = (
-        "You are the Attraction sub-agent. Classify each query into one of two tasks and use tools.\n"
-        "1) attraction_recommendation: recommend attractions for a city.\n"
-        "2) attraction_info: fetch details for one attraction.\n"
-        "Output must be a strict JSON object only, with no markdown and no extra commentary.\n"
-        "Recommendation JSON schema:\n"
-        "{\"query_type\":\"attraction_recommendation\",\"city\":\"string\",\"attractions\":[{\"name\":\"string\",\"description\":\"string\",\"image\":\"string\",\"ticket_price\":\"string\"}],\"sources\":[]}\n"
-        "Info JSON schema:\n"
-        "{\"query_type\":\"attraction_info\",\"name\":\"string\",\"description\":\"string\",\"image\":\"string\",\"opening_hours\":\"string\",\"visit_duration\":\"string\",\"ticket_price\":\"string\",\"ticket_status\":\"string\",\"price_note\":\"string\",\"sources\":[]}\n"
-        "Use tools whenever possible and keep all fields present."
-    )
-    return create_agent(model=llm, tools=tools, system_prompt=system_prompt)
+    names = "、".join(missing)
+    # 给几个同城的高分景点当台阶，比单说"没找到"有用
+    nearby = "、".join(a.name for a in sorted(pool, key=lambda a: a.recall_rank)[:3])
+    message = f"没找到「{names}」，已跳过"
+    if nearby:
+        message += f"；该城市的热门景点有：{nearby}"
+    return pool, [PlanWarning.of("MUST_VISIT_NOT_FOUND", message, stage="attraction")]
 
 
-def _build_detail_from_query(query: str) -> dict[str, Any]:
-    name, location_hint = _extract_detail_target(query)
-    detail = get_attraction_info(attraction_name=name, location=location_hint or None)
+async def enrich_entrances(
+    attractions: list[Attraction], *, client=None
+) -> list[Attraction]:
+    """给缺 entrance 的景点补导航入口坐标。
 
-    if location_hint and not _compact_description(detail.get("description")) and not str(detail.get("image_url") or "").strip():
-        retry = get_attraction_info(attraction_name=name, location=None)
-        for key in ("description", "image_url", "ticket_price", "sources", "opening_hours", "visit_duration"):
-            if not detail.get(key) and retry.get(key):
-                detail[key] = retry.get(key)
+    大型景区的 POI 中心点常落在湖里或山里，直接拿去算驾车路线会得到荒谬结果。
+    只对最终入选的景点做，一次最多 20 个。
+    """
+    missing = [a for a in attractions if a.entrance is None]
+    if not missing:
+        return attractions
 
-    return _normalize_info(detail)
+    detail_by_id: dict[str, Attraction] = {}
+    for offset in range(0, len(missing), 20):
+        batch = missing[offset : offset + 20]
+        for detail in await poi_detail([a.poi_id for a in batch], client=client):
+            detail_by_id[detail.poi_id] = detail
 
-
-def run_attraction_agent(query: str) -> dict[str, Any]:
-    """Attraction sub-agent entrypoint."""
-    if _is_recommendation_query(query):
-        city = _normalize_city(query)
-        if city:
-            return _build_recommendation_from_city(city=city, query=query)
-
-    if _is_detail_query(query):
-        return _build_detail_from_query(query)
-
-    executor = _build_executor()
-    result = executor.invoke({"messages": [("user", query)]})
-    messages = result.get("messages", []) if isinstance(result, dict) else []
-    output = messages[-1].content if messages else ""
-    payload = _extract_payload_from_output(output)
-
-    query_type = str(payload.get("query_type", "")).strip()
-    if query_type == "attraction_recommendation":
-        city = _normalize_city(payload.get("city") or query)
-        normalized = _normalize_recommendation(payload)
-        if len(normalized.get("attractions", [])) >= 1:
-            return normalized
-        if city:
-            return _build_recommendation_from_city(city=city, query=query)
-        return normalized
-
-    if query_type == "attraction_info":
-        normalized_info = _normalize_info(payload)
-        if normalized_info.get("name"):
-            return normalized_info
-        return _build_detail_from_query(query)
-
-    if "attractions" in payload or "city" in payload:
-        normalized = _normalize_recommendation(payload)
-        if len(normalized.get("attractions", [])) >= 1:
-            return normalized
-        city = _normalize_city(payload.get("city") or query)
-        if city:
-            return _build_recommendation_from_city(city=city, query=query)
-        return normalized
-
-    return _build_detail_from_query(query)
+    out: list[Attraction] = []
+    for a in attractions:
+        detail = detail_by_id.get(a.poi_id)
+        if a.entrance is None and detail is not None and detail.entrance is not None:
+            a = a.model_copy(update={"entrance": detail.entrance})
+        out.append(a)
+    return out
 
 
-def _build_cli_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run attraction sub-agent with a natural language query.")
-    parser.add_argument(
-        "query",
-        type=str,
-        nargs="?",
-        help="Natural language query, e.g. 'Top attractions in Beijing'",
-    )
-    return parser
+# --------------------------------------------------------------------------
+# 打分与筛选（纯函数）
+# --------------------------------------------------------------------------
+def type_weight(typecode: str) -> float:
+    """先精确匹配分类码，再退到大类（前 4 位 + '00'）。"""
+    if typecode in TYPE_WEIGHTS:
+        return TYPE_WEIGHTS[typecode]
+    if len(typecode) >= 4 and (major := typecode[:4] + "00") in TYPE_WEIGHTS:
+        return TYPE_WEIGHTS[major]
+    return DEFAULT_TYPE_WEIGHT
 
 
-if __name__ == "__main__":
-    parser = _build_cli_parser()
-    args = parser.parse_args()
-    if not args.query:
-        parser.error("query is required. Example: python -m app.agents.attraction_agent 'Batu Caves ticket price'")
+def _completeness(a: Attraction) -> float:
+    """有图有营业时间的条目，展示效果和可规划性都更好。"""
+    return 0.5 * bool(a.photos) + 0.5 * bool(a.opentime_today)
 
-    response = run_attraction_agent(args.query)
-    print(json.dumps(response, ensure_ascii=False, indent=2))
+
+def _popularity(a: Attraction) -> float:
+    """把关键字搜索的名次折算成 0~1 的热度分。"""
+    if a.recall_rank is None:
+        return UNRANKED_POPULARITY
+    return max(0.0, 1.0 - a.recall_rank / RANK_HORIZON)
+
+
+def _distance_score(a: Attraction, anchor: GeoPoint) -> float:
+    """离锚点越近越高。锚点用城市中心而不是景点重心——重心要等选完才有，
+    用它打分会造成循环依赖。"""
+    meters = a.routing_point.distance_to(anchor)
+    return max(0.0, 1.0 - min(meters, FAR_AWAY_M) / FAR_AWAY_M)
+
+
+def stay_minutes(a: Attraction, pace: Pace) -> int:
+    base = DEFAULT_STAY_MINUTES[pace]
+    return round(base * 1.5) if a.is_large_scenic_area else base
+
+
+def score_attractions(
+    pool: list[Attraction],
+    anchor: GeoPoint,
+    pace: Pace = "standard",
+    *,
+    avoid: list[str] | None = None,
+) -> list[Attraction]:
+    """打分并按分数降序返回。必去景点恒定排在最前。"""
+    avoid_terms = [t.strip() for t in (avoid or []) if t.strip()]
+
+    scored: list[Attraction] = []
+    for a in pool:
+        if not a.must_visit and any(term in a.name for term in avoid_terms):
+            continue
+        rating_score = NEUTRAL_RATING_SCORE if a.rating is None else min(a.rating, 5.0) / 5.0
+        score = (
+            W_POPULARITY * _popularity(a)
+            + W_RATING * rating_score
+            + W_TYPE * type_weight(a.typecode)
+            + W_DISTANCE * _distance_score(a, anchor)
+            + W_COMPLETENESS * _completeness(a)
+        )
+        scored.append(
+            a.model_copy(
+                update={"score": round(score, 4), "suggested_duration_min": stay_minutes(a, pace)}
+            )
+        )
+
+    scored.sort(key=lambda a: (a.must_visit, a.score), reverse=True)
+    return scored[:MAX_POOL]
+
+
+def is_sub_area(child: Attraction, parent: Attraction) -> bool:
+    """子景点是不是父景区的**一个分区**（而不是园内一个独立景点）。
+
+    只看 `parent` 字段会误伤。深圳实测：
+
+        深圳华侨城旅游度假区  ←parent─  深圳世界之窗 / 锦绣中华民俗村
+        西涌国际滨海旅游区    ←parent─  杨梅坑
+
+    这些"父"是行政/商业容器，子才是人们真正要去的地方、各自独立收费、各逛半天。
+    单靠 parent 去重会把第 2 高分的世界之窗挤掉，而容器本身又没排进行程——两个都丢。
+
+    判别信号在高德的命名惯例里：**同一景区内部的分区叫「父名-子名」**。
+
+        杭州西湖风景名胜区-断桥残雪   → 是分区，该去重
+        深圳仙湖植物园-弘法寺         → 是分区，该去重
+        深圳世界之窗                  → 独立景点，保留
+    """
+    return child.name.startswith(parent.name) and len(child.name) > len(parent.name)
+
+
+def select_attractions(scored: list[Attraction], travel_days: int) -> list[Attraction]:
+    """取 Top-K，并把已入选景区的**分区**挡掉。
+
+    K = 游玩天数 × 4，上限 20；必去景点即使超额也不会被挤掉。
+
+    去重的由来：高德会把"西湖风景名胜区"和它的"断桥残雪""柳浪闻莺"作为独立 POI
+    返回。不过滤的话一个西湖能占掉 16 个名额里的 3 个，而用户实际上只是
+    "去西湖玩一天"。判别方式见 `is_sub_area`。
+    """
+    limit = min(max(travel_days, 1) * PER_DAY_CANDIDATES, MAX_SELECTED)
+
+    must = [a for a in scored if a.must_visit]
+    selected = list(must)
+    taken = {a.poi_id: a for a in must}
+
+    for a in scored:
+        if len(selected) >= limit:
+            break
+        if a.poi_id in taken:
+            continue
+        parent = taken.get(a.parent_id) if a.parent_id else None
+        if parent is not None and is_sub_area(a, parent):
+            continue  # 所属景区已入选，这只是它的一个分区
+        selected.append(a)
+        taken[a.poi_id] = a
+
+    return selected
+
+
+def attractions_centroid(
+    attractions: list[Attraction], city_center: GeoPoint | None = None
+) -> GeoPoint | None:
+    """景点重心——酒店重排的锚点。
+
+    必须在 enrich_entrances 之后再算：入口坐标和 POI 中心点可能差好几公里。
+
+    **给了 `city_center` 就先剔除远郊景点再取平均。** 算术平均对离群点毫无抵抗力：
+    实测成都 20 个景点里有 7 个在 40 km 外（都江堰 64 km、青城后山 67 km、
+    天台山 91 km），把重心从市中心拽出 **19.3 km**，于是每一家市区酒店测出来
+    都是"距景点集中区 40~60 分钟"，通勤这一维在重排里彻底失效。
+
+        算术平均 19.3 km ／ 中位数 10.6 km ／ 剔除远郊后 **5.1 km**
+
+    远郊景点本来就要单独安排一日游（见 `route_planner.split_day_trips`），
+    不该把酒店往它们那边拽——判据用同一个半径，保持口径一致。
+    必去景点也一视同仁：用户说要去都江堰，不等于愿意为它把酒店挪到 60 km 外。
+    """
+    if not attractions:
+        return None
+
+    points = [a.routing_point.as_gcj02().coordinate for a in attractions]
+    if city_center is not None:
+        anchor = city_center.as_gcj02().coordinate
+        inner = [p for p in points if haversine_m(p, anchor) <= DAY_TRIP_RADIUS_M]
+        # 全都在远郊（景点都在郊县的小城市）就退回全量，总比没有锚点强
+        if inner:
+            points = inner
+
+    lng, lat = centroid(points)
+    return GeoPoint.gcj02(lng, lat)

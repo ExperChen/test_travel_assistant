@@ -1,0 +1,66 @@
+{
+  "status": "1",
+  "info": "OK",
+  "count": "2",
+  "route": {
+    "origin": "116.481499,39.990475",
+    "destination": "116.434446,39.90816",
+    "taxi_cost": "78",
+    "paths": [
+      {
+        "distance": "21000",
+        "duration": "2400",
+        "strategy": "10",
+        "tolls": "5",
+        "toll_distance": "8000",
+        "restriction": "1",
+        "traffic_lights": "17",
+        "steps": [
+          {
+            "instruction": "沿广泽桥向西行驶500米后驶入京密路",
+            "orientation": "西",
+            "road": "京密路/G101",
+            "distance": "2500",
+            "tolls": "0",
+            "polyline": "116.48,39.99;116.47,39.98",
+            "action": "靠左",
+            "assistant_action": "进入高速"
+          },
+          {
+            "instruction": "沿京密路行驶8公里",
+            "road": "京密路",
+            "distance": "8000",
+            "polyline": "116.47,39.98;116.45,39.95"
+          },
+          {
+            "instruction": "从出口离开",
+            "road": "",
+            "distance": "500",
+            "polyline": "116.45,39.95;116.44,39.94"
+          },
+          {
+            "instruction": "沿建国门外大街行驶到达终点",
+            "road": "建国门外大街",
+            "distance": "1000",
+            "polyline": "116.44,39.94;116.43,39.91"
+          }
+        ],
+        "cities": [
+          {
+            "name": "北京市",
+            "citycode": "010",
+            "districts": [{ "name": "朝阳区", "adcode": "110105" }]
+          }
+        ]
+      },
+      {
+        "distance": "23000",
+        "duration": "2100",
+        "strategy": "11",
+        "tolls": "15",
+        "restriction": "0",
+        "steps": []
+      }
+    ]
+  }
+}

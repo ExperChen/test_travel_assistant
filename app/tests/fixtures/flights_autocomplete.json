@@ -1,0 +1,34 @@
+{
+  "search_metadata": { "id": "fixture-flights-autocomplete", "status": "Success" },
+  "suggestions": [
+    {
+      "type": "City",
+      "name": "New York",
+      "description": "City in New York, United States",
+      "id": "/m/02_286",
+      "airports": [
+        {
+          "name": "John F. Kennedy International Airport",
+          "id": "JFK",
+          "city": "New York",
+          "city_id": "/m/02_286",
+          "distance": "14 mi"
+        },
+        {
+          "name": "Newark Liberty International Airport",
+          "id": "EWR",
+          "city": "Newark",
+          "city_id": "/m/02_286",
+          "distance": "9 mi"
+        },
+        {
+          "name": "LaGuardia Airport",
+          "id": "LGA",
+          "city": "New York",
+          "city_id": "/m/02_286",
+          "distance": "9 mi"
+        }
+      ]
+    }
+  ]
+}
