@@ -1,12 +1,15 @@
 """LangGraph 装配与执行。
 
-图结构（架构文档 §4.2）：
+图结构（架构文档 §4.2 + 记忆与追问文档 §4）：
 
-    intake → resolve_city ─┬─ flight ×3 ─┐
-                           └─ 景点 → 酒店 ─┴→ route_planner → summarize
+    intake → clarify → resolve_city ─┬─ flight ×3 ─┐
+                                     └─ 景点 → 酒店 ─┴→ route_planner → summarize
 
 两条分支并行：最慢的是航班（3 次 API + 可能两次人工确认），让它与「景点→酒店」
 同时跑。酒店必须排在景点之后——它要用景点重心做重排锚点。
+
+`clarify` 插在 `resolve_city` **之前**：它可能改掉人数/预算/节奏，而这三项
+后面的机票和酒店查询都要用；更重要的是它早于第一个烧 SerpAPI 额度的动作。
 """
 
 from __future__ import annotations
@@ -30,6 +33,7 @@ from app.core.logging import bind_trip, get_logger
 from app.core.metrics import track_quota
 from app.graph.nodes._common import continue_or_fail
 from app.graph.nodes.attraction import attraction_search
+from app.graph.nodes.clarify import clarify
 from app.graph.nodes.flight import flight_arrival, flight_departure, flight_search
 from app.graph.nodes.hotel import hotel_search
 from app.graph.nodes.intake import intake
@@ -110,6 +114,7 @@ def build_graph(checkpointer=None):
     graph = StateGraph(TripState)
     for name, fn in (
         ("intake", intake),
+        ("clarify", clarify),
         ("resolve_city", resolve_city),
         (FLIGHT_ENTRY, flight_departure),
         ("flight_arrival", flight_arrival),
@@ -123,7 +128,10 @@ def build_graph(checkpointer=None):
 
     graph.add_edge(START, "intake")
     graph.add_conditional_edges(
-        "intake", continue_or_fail, {"continue": "resolve_city", "failed": END}
+        "intake", continue_or_fail, {"continue": "clarify", "failed": END}
+    )
+    graph.add_conditional_edges(
+        "clarify", continue_or_fail, {"continue": "resolve_city", "failed": END}
     )
     graph.add_conditional_edges("resolve_city", _fan_out, [FLIGHT_ENTRY, LOCAL_ENTRY, END])
 
@@ -175,9 +183,19 @@ class TripRunner:
     def _config(self, trip_id: str) -> dict:
         return {"configurable": {"thread_id": trip_id}}
 
-    async def start(self, request: TripRequest, *, trip_id: str | None = None) -> TripState:
+    async def start(
+        self,
+        request: TripRequest,
+        *,
+        trip_id: str | None = None,
+        profile_id: str = "",
+        origins: dict[str, str] | None = None,
+    ) -> TripState:
         trip_id = trip_id or new_trip_id()
-        return await self._run(trip_id, initial_state(trip_id, request))
+        return await self._run(
+            trip_id,
+            initial_state(trip_id, request, profile_id=profile_id, origins=origins),
+        )
 
     async def iter_run(
         self, trip_id: str, payload: Any
@@ -211,10 +229,16 @@ class TripRunner:
         return state
 
     async def start_stream(
-        self, request: TripRequest, *, trip_id: str | None = None
+        self,
+        request: TripRequest,
+        *,
+        trip_id: str | None = None,
+        profile_id: str = "",
+        origins: dict[str, str] | None = None,
     ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
         trip_id = trip_id or new_trip_id()
-        async for update in self.iter_run(trip_id, initial_state(trip_id, request)):
+        payload = initial_state(trip_id, request, profile_id=profile_id, origins=origins)
+        async for update in self.iter_run(trip_id, payload):
             yield update
 
     async def resume_stream(

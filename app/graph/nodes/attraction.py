@@ -9,6 +9,7 @@ from app.agents.attraction_agent import (
     score_attractions,
     select_attractions,
 )
+from app.config import settings
 from app.core.exceptions import AppError
 from app.core.logging import get_logger
 from app.graph.nodes._common import fail, warn
@@ -24,6 +25,24 @@ MIN_PER_DAY = 2
 """每天少于 2 个景点就不成行程了，要提示用户放宽条件。"""
 
 
+async def _recall_visited(state: TripState):
+    """取 L3 履历用于降权。
+
+    取不到就返回 None——**打分退化成没有记忆时的行为**，绝不因为记忆不可用
+    而让景点搜索失败。
+    """
+    profile_id = state.get("profile_id") or ""
+    if not profile_id or not settings.memory_enabled:
+        return None
+    try:
+        from app.store import get_store
+
+        return await get_store().snapshot(profile_id)
+    except Exception:  # noqa: BLE001 —— 记忆是增量特性，坏了就当没有
+        log.warning("读取履历失败，打分不做降权", extra={"profile_id": profile_id})
+        return None
+
+
 async def attraction_search(state: TripState) -> dict:
     city = state["dest_city"]
     request = state["request"]
@@ -36,8 +55,17 @@ async def attraction_search(state: TripState) -> dict:
     if not pool:
         return fail(ErrorCode.NO_ATTRACTIONS, f"{city.name} 没有召回到任何景点", city=city.name)
 
-    scored = score_attractions(pool, city.center, request.pace, avoid=request.avoid)
+    memory = await _recall_visited(state)
+    scored = score_attractions(
+        pool, city.center, request.pace, avoid=request.avoid, memory=memory
+    )
     selected = select_attractions(scored, request.travel_days)
+
+    # 降权必须**说出来**——用户看到熟悉的景点排得靠后，得知道是为什么
+    for a in selected:
+        if a.visited_note:
+            warnings.extend(warn("ATTRACTION_VISITED", f"「{a.name}」{a.visited_note}",
+                                 stage="attraction"))
 
     try:
         # 入口坐标只对最终入选的景点补，一次 amap 调用换一批

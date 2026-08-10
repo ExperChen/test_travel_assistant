@@ -28,6 +28,7 @@ from app.core.dates import format_cn, parse_relative_date
 from app.core.logging import get_logger
 from app.core.metrics import record_call
 from app.models.flight import TravelClass
+from app.models.memory import BUDGET_LABELS, MemorySnapshot, bucket_to_budget
 from app.models.route import TransportMode
 from app.models.trip import Pace, TripRequest
 
@@ -40,6 +41,7 @@ __all__ = [
     "parse_prompt",
     "extract_by_rules",
     "resolve",
+    "loads_json",
     "SYSTEM_PROMPT",
 ]
 
@@ -70,7 +72,17 @@ class Extraction(BaseModel):
     avoid: list[str] = Field(default_factory=list)
 
 
-Origin = Literal["prompt", "derived", "default"]
+Origin = Literal["prompt", "memory", "derived", "default"]
+"""优先级从高到低（记忆与追问文档 §2）：
+
+    prompt   用户这次说的        ← 最高
+    memory   从长期记忆里取的
+    derived  由其它字段推算的
+    default  系统默认值          ← 最低
+
+⚠️ **记忆只填空，绝不覆盖。** 用户这次说了什么就是什么，哪怕和记忆冲突——
+冲突本身是有价值的信号（去更新记忆），不是需要"纠正"的错误。
+"""
 
 
 class DraftField(BaseModel):
@@ -124,9 +136,17 @@ SYSTEM_PROMPT = """你是行程需求解析器。把用户的话抽取成 JSON�
 
 
 async def parse_prompt(
-    prompt: str, *, today: date | None = None, llm=None
+    prompt: str,
+    *,
+    today: date | None = None,
+    llm=None,
+    memory: MemorySnapshot | None = None,
 ) -> TripDraft:
-    """把一句话解析成 `TripRequest` 草稿。绝不抛异常。"""
+    """把一句话解析成 `TripRequest` 草稿。绝不抛异常。
+
+    `memory` 是可选的长期偏好快照：只用来**填空**，永远不覆盖用户这次说的话。
+    不传就是没有记忆时的原行为。
+    """
     today = today or date.today()
     text = (prompt or "").strip()[:MAX_PROMPT_CHARS]
     if not text:
@@ -134,7 +154,7 @@ async def parse_prompt(
                          questions=["想去哪儿、什么时候出发？"])
 
     extraction, degraded = await _extract(text, llm)
-    draft = resolve(text, extraction, today=today)
+    draft = resolve(text, extraction, today=today, memory=memory)
     draft.degraded = degraded
     log.info(
         "需求解析完成",
@@ -142,6 +162,7 @@ async def parse_prompt(
             "ok": draft.ok,
             "degraded": degraded,
             "missing": draft.missing,
+            "memory_filled": [f.key for f in draft.fields if f.origin == "memory"],
             "to": extraction.destination_city,
         },
     )
@@ -164,7 +185,7 @@ async def _extract(text: str, llm) -> tuple[Extraction, bool]:
             ]
         )
         raw = getattr(response, "content", "") or ""
-        return Extraction.model_validate(_loads_json(raw)), False
+        return Extraction.model_validate(loads_json(raw)), False
     except Exception as exc:  # noqa: BLE001 —— 模型不给力就退回规则，不能让解析失败
         log.warning("模型解析失败，改用规则抽取", extra={"err": str(exc) or type(exc).__name__})
         return extract_by_rules(text), True
@@ -179,7 +200,7 @@ def _default_llm():
 _FENCE = re.compile(r"^\s*```(?:json)?\s*|\s*```\s*$", re.IGNORECASE)
 
 
-def _loads_json(raw: str) -> dict:
+def loads_json(raw: str) -> dict:
     """模型经常裹一层 ```json 代码块，或在 JSON 前后加一句废话。"""
     cleaned = _FENCE.sub("", raw.strip())
     try:
@@ -208,8 +229,15 @@ _RE_BUDGET = re.compile(
 )
 _RE_BUDGET2 = re.compile(r"预算\s*(?:每晚|一晚)?\s*([0-9]+)")
 _RE_ADULTS = re.compile(r"([0-9]+|[一二两三四五六七八九十]+)\s*(?:个|位|名)?\s*(?:大人|成人|人)")
-_RE_MUST = re.compile(r"(?:想去|必去|一定要去|想看|要去)\s*([一-龥A-Za-z0-9]{2,15})")
-_RE_AVOID = re.compile(r"(?:不去|不想去|别去|避开|不要去)\s*([一-龥A-Za-z0-9]{2,15})")
+# 收尾边界和 _RE_TO 保持一致：不加边界的话「想去成都玩5天」会把整段
+# 「成都玩5天」当成景点名。单轮解析时只是条噪音，但 ReAct 的槽位是**累积**的，
+# 这条垃圾会一直粘在会话里，最后进 route_planner 拿去和景点池强行匹配。
+_TERM = r"(?:玩|旅游|出差|待|呆|停留|游|逛|看看|[，,。；;、\s]|$)"
+# 负向后顾挡掉「不想去」——否则同一个短语会同时落进 must 和 avoid，自相矛盾
+_RE_MUST = re.compile(
+    rf"(?<![不别])(?:想去|必去|一定要去|想看|要去)\s*([一-龥A-Za-z0-9]{{2,15}}?)\s*{_TERM}"
+)
+_RE_AVOID = re.compile(rf"(?:不去|不想去|别去|避开|不要去)\s*([一-龥A-Za-z0-9]{{2,15}}?)\s*{_TERM}")
 
 _DATE_PATTERNS = (
     re.compile(r"\d{4}\s*[-/年.]\s*\d{1,2}\s*[-/月.]\s*\d{1,2}\s*[日号]?"),
@@ -303,6 +331,7 @@ LABELS = {
     "adults": "成人",
     "children": "儿童",
     "budget_per_night": "每晚预算",
+    "hotel_class": "酒店星级",
     "travel_class": "舱位",
     "pace": "节奏",
     "transport": "市内交通",
@@ -311,19 +340,61 @@ LABELS = {
 }
 
 
-def resolve(prompt: str, extraction: Extraction, *, today: date) -> TripDraft:
-    """把抽取结果落成 `TripRequest`，并逐字段记下出处。纯函数，不碰网络。"""
+def _recall(memory: MemorySnapshot | None, key: str):
+    """从记忆里取一条偏好；没有或空值返回 None。
+
+    空值也当没有：`children_ages: []`、`hotel_class: []` 这些填了等于没填。
+    """
+    if memory is None or memory.profile is None:
+        return None
+    pref = memory.profile.get(key)
+    if pref is None or pref.value is None or pref.value == "" or pref.value == []:
+        return None
+    return pref
+
+
+def resolve(
+    prompt: str,
+    extraction: Extraction,
+    *,
+    today: date,
+    memory: MemorySnapshot | None = None,
+) -> TripDraft:
+    """把抽取结果落成 `TripRequest`，并逐字段记下出处。纯函数，不碰网络。
+
+    优先级 `prompt > memory > derived > default`（记忆与追问文档 §2）。
+    记忆分两档用：
+
+    - **高置信度**（`confidence ≥ 0.6`，约等于说过三次）→ 直接填，`origin="memory"`
+    - **低置信度** → 只拿来**建议**，进 `questions`，值仍走默认——
+      说过一次就当成习惯，比不记还糟
+    """
     draft = TripDraft(prompt=prompt)
     add = draft.fields.append
 
     departure = extraction.departure_city
     destination = extraction.destination_city
+
+    recalled_departure = _recall(memory, "departure_city")
     if departure:
         add(DraftField(key="departure_city", label=LABELS["departure_city"],
                        value=departure, origin="prompt"))
+    elif recalled_departure is not None and recalled_departure.is_confident:
+        departure = str(recalled_departure.value)
+        add(DraftField(
+            key="departure_city", label=LABELS["departure_city"],
+            value=departure, origin="memory",
+            note=f"你最近 {recalled_departure.samples} 次都从这儿出发",
+        ))
     else:
         draft.missing.append(LABELS["departure_city"])
-        draft.questions.append("从哪个城市出发？")
+        if recalled_departure is not None:
+            # 低置信度：给建议而不是替他做决定
+            draft.questions.append(
+                f"上次你是从{recalled_departure.value}出发的，这次也一样吗？"
+            )
+        else:
+            draft.questions.append("从哪个城市出发？")
 
     if destination:
         add(DraftField(key="destination_city", label=LABELS["destination_city"],
@@ -345,7 +416,7 @@ def resolve(prompt: str, extraction: Extraction, *, today: date) -> TripDraft:
         draft.missing.append(LABELS["return_date"])
         draft.questions.append("玩几天？或者哪天返程？")
 
-    optional = _resolve_optional(extraction, add)
+    optional = _resolve_optional(extraction, add, memory=memory, draft=draft)
 
     if outbound is None or departure is None or destination is None or return_date is None:
         return draft
@@ -419,39 +490,58 @@ DISPLAY = {
 def _show(key: str, value: object) -> str:
     if key == "adults":
         return f"{value} 位"
+    if key == "hotel_class" and isinstance(value, list):
+        return "、".join(f"{v}★" for v in value)
     return DISPLAY.get(str(value), str(value))
 
 
-def _resolve_optional(extraction: Extraction, add) -> dict:
-    """可选字段：说了就用，没说就取默认值并标明这是我们替它定的。"""
+def _resolve_optional(
+    extraction: Extraction,
+    add,
+    *,
+    memory: MemorySnapshot | None = None,
+    draft: TripDraft | None = None,
+) -> dict:
+    """可选字段：说了就用，记忆够可信就用记忆，都没有才取默认值。
+
+    每一档都在 `origin` 里如实标出来，用户要能一眼分辨"这是我说的"
+    还是"这是系统替我定的"。
+    """
     values: dict = {}
+    suggest = draft.questions.append if draft is not None else (lambda _: None)
 
     for key, (fallback, label) in DEFAULTS.items():
         given = getattr(extraction, key)
-        values[key] = given if given is not None else fallback
-        add(DraftField(
-            key=key, label=LABELS[key],
-            value=_show(key, given) if given is not None else label,
-            origin="prompt" if given is not None else "default",
-            note="" if given is not None else "未提及，用默认值",
-        ))
+        if given is not None:
+            values[key] = given
+            add(DraftField(key=key, label=LABELS[key], value=_show(key, given),
+                           origin="prompt"))
+            continue
 
-    if extraction.children:
-        values["children"] = extraction.children
-        # 年龄对不上会被 TripRequest 拦下，这里先按缺省年龄补齐再交给它校验
-        ages = extraction.children_ages[: extraction.children]
-        values["children_ages"] = ages
-        add(DraftField(key="children", label=LABELS["children"],
-                       value=f"{extraction.children} 位", origin="prompt",
-                       note="" if len(ages) == extraction.children else "年龄没说全"))
+        pref = _recall(memory, key)
+        if pref is not None and pref.is_confident:
+            values[key] = pref.value
+            add(DraftField(
+                key=key, label=LABELS[key], value=_show(key, pref.value),
+                origin="memory", note=f"你惯常的选择（说过 {pref.samples} 次）",
+            ))
+            continue
 
-    if extraction.budget_per_night is not None:
-        values["budget_per_night"] = extraction.budget_per_night
-        add(DraftField(key="budget_per_night", label=LABELS["budget_per_night"],
-                       value=f"¥{extraction.budget_per_night}", origin="prompt"))
+        values[key] = fallback
+        add(DraftField(key=key, label=LABELS[key], value=label, origin="default",
+                       note="未提及，用默认值"))
+        if pref is not None:
+            suggest(f"{LABELS[key]}上次你选的是{_show(key, pref.value)}，这次也一样吗？")
+
+    values.update(_resolve_children(extraction, add, memory))
+    values.update(_resolve_budget(extraction, add, memory))
+    values.update(_resolve_hotel_class(add, memory))
 
     # 「想去杭州」里的杭州是目的地，不是景点——同名的必去项要摘掉，
     # 否则 route_planner 会拿着城市名去景点池里强行匹配
+    #
+    # must_visit / avoid **刻意不进记忆**：它们强绑定目的地，是 L3 的活。
+    # 记住"这个人必去兵马俑"然后在去三亚时也加上，是明显的错。
     cities = {c for c in (extraction.departure_city, extraction.destination_city) if c}
     for key in ("must_visit", "avoid"):
         items = [x for x in getattr(extraction, key) if _clean_city(x) not in cities]
@@ -461,3 +551,72 @@ def _resolve_optional(extraction: Extraction, add) -> dict:
                            value="、".join(items), origin="prompt"))
 
     return values
+
+
+def _resolve_children(extraction: Extraction, add, memory: MemorySnapshot | None) -> dict:
+    """儿童人数与年龄。
+
+    记忆里的年龄在 `MemorySnapshot` 生成时已经按经过年数推进过了
+    （`Profile.advance_children_ages`）——存死数字会让去年 5 岁的孩子永远 5 岁。
+    """
+    if extraction.children:
+        # 年龄对不上会被 TripRequest 拦下，这里先按缺省年龄补齐再交给它校验
+        ages = extraction.children_ages[: extraction.children]
+        add(DraftField(key="children", label=LABELS["children"],
+                       value=f"{extraction.children} 位", origin="prompt",
+                       note="" if len(ages) == extraction.children else "年龄没说全"))
+        return {"children": extraction.children, "children_ages": ages}
+
+    pref = _recall(memory, "children")
+    if pref is None or not pref.is_confident or not pref.value:
+        return {}
+
+    count = int(pref.value)
+    ages_pref = _recall(memory, "children_ages")
+    ages = [int(a) for a in ages_pref.value][:count] if ages_pref is not None else []
+    note = "记忆中的家庭结构"
+    if ages:
+        note += f"；年龄已按时间推进为 {'、'.join(str(a) for a in ages)} 岁"
+    add(DraftField(key="children", label=LABELS["children"], value=f"{count} 位",
+                   origin="memory", note=note))
+    # 年龄数量对不上就整个不填——宁可不带儿童，也不能凭空编年龄去查票价
+    return {"children": count, "children_ages": ages} if len(ages) == count else {}
+
+
+def _resolve_budget(extraction: Extraction, add, memory: MemorySnapshot | None) -> dict:
+    """每晚预算。
+
+    记忆里存的是**档位**不是数字（文档 §2）：去三亚和去县城的预算不是一回事，
+    只有档位跨行程稳定。取用时换回该档的上界。
+    """
+    if extraction.budget_per_night is not None:
+        add(DraftField(key="budget_per_night", label=LABELS["budget_per_night"],
+                       value=f"¥{extraction.budget_per_night}", origin="prompt"))
+        return {"budget_per_night": extraction.budget_per_night}
+
+    pref = _recall(memory, "budget_per_night")
+    if pref is None or not pref.is_confident:
+        return {}
+
+    bucket = str(pref.value)
+    amount = bucket_to_budget(bucket)
+    if amount is None:
+        return {}  # any / over_1000 都是"不设上限"，等同于不填
+    add(DraftField(key="budget_per_night", label=LABELS["budget_per_night"],
+                   value=f"¥{amount} 以内", origin="memory",
+                   note=f"你惯常的档位：{BUDGET_LABELS.get(bucket, bucket)}"))
+    return {"budget_per_night": amount}
+
+
+def _resolve_hotel_class(add, memory: MemorySnapshot | None) -> dict:
+    """酒店星级。抽取层不解析它，所以只可能来自记忆。"""
+    pref = _recall(memory, "hotel_class")
+    if pref is None or not pref.is_confident:
+        return {}
+    stars = [int(s) for s in pref.value if int(s) in (2, 3, 4, 5)]
+    if not stars:
+        return {}
+    add(DraftField(key="hotel_class", label=LABELS["hotel_class"],
+                   value=_show("hotel_class", stars), origin="memory",
+                   note="你惯常住的档次"))
+    return {"hotel_class": stars}

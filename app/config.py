@@ -92,6 +92,26 @@ class Settings(BaseSettings):
     """路径受路况影响，短 TTL。"""
     cache_max_entries: int = 2048
 
+    # ---- 长期记忆（记忆与追问文档 §5 / §6）----
+    memory_enabled: bool = True
+    """关掉它，`prompt_parser` 和景点打分都退回没有记忆时的行为。
+
+    记忆是纯增量特性：任何一处失败都只会退化成"这个人没有记忆"，
+    绝不能让规划本身失败。"""
+    memory_db_path: str = str(BASE_DIR / "data" / "memory.db")
+    """SQLite 单文件。上多副本时和 checkpointer 一起迁 Postgres。"""
+
+    # ---- ReAct 参数收集（Flight ReAct Agent 设计文档 §2）----
+    react_enabled: bool = True
+    """关掉则 `/trips/parse` 退回单次抽取（现有的 `parse_prompt` 行为）。"""
+    react_max_steps: int = 6
+    """ReAct 循环的硬上限。
+
+    到达上限就带着已收集到的参数收尾，而不是继续烧 token——参数收集本身
+    最多用到 2~3 次工具调用（两端机场 + 城市校验），6 步足够容错。"""
+    clarify_enabled: bool = True
+    """是否在 intake 之后追问关键的缺失字段。"""
+
     # ---- 业务默认值 ----
     interrupt_timeout_s: int = 600
     """中断问题多久没人回答就用默认值自动恢复。"""

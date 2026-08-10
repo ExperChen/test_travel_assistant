@@ -30,3 +30,9 @@ logs/
 .idea/
 .DS_Store
 Thumbs.db
+
+# 长期记忆的 SQLite 单文件（含 WAL 附属文件）。是用户数据，不进版本库。
+data/
+*.db
+*.db-wal
+*.db-shm

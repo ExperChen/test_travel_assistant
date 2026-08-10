@@ -22,6 +22,7 @@ __all__ = ["TripState", "Phase", "initial_state", "to_plan"]
 
 Phase = Literal[
     "intake",
+    "clarify",
     "resolve_city",
     "flight",
     "attraction",
@@ -37,13 +38,14 @@ Phase = Literal[
 # 进度取更靠后的那个，失败永远压过一切。
 _PHASE_RANK: dict[str, int] = {
     "intake": 0,
-    "resolve_city": 1,
-    "flight": 2,
-    "attraction": 2,
-    "hotel": 3,
-    "planning": 4,
-    "summarizing": 5,
-    "done": 6,
+    "clarify": 1,
+    "resolve_city": 2,
+    "flight": 3,
+    "attraction": 3,
+    "hotel": 4,
+    "planning": 5,
+    "summarizing": 6,
+    "done": 7,
     "failed": 99,
 }
 
@@ -65,7 +67,21 @@ class TripState(TypedDict, total=False):
     # ---- 输入：intake 归一后写入，全程只读 ----
     trip_id: str
     request: TripRequest
+    """clarify 节点**会改写它**（把用户补答的人数/预算/节奏落进去），
+    此后到规划结束都只读。"""
     locale: LocaleCtx
+
+    # ---- 记忆与追问（记忆与追问文档 §2 / §4）----
+    profile_id: str
+    """哪一份长期记忆。空串 = 不使用记忆。"""
+    origins: dict[str, str]
+    """`{字段: prompt|memory|derived|default}`，由 `/trips/parse` 产出并随创建请求带来。
+
+    clarify 靠它判断哪些字段是"系统替用户定的"。**拿不到就不追问**——
+    没有证据时宁可沿用默认值，也不能凭猜去打断用户。
+    """
+    clarified: bool
+    """追问是否已经走过。最多问一轮，问过就不再问。"""
 
     # ---- 目的地 ----
     dest_city: CityRef
@@ -118,10 +134,19 @@ def to_plan(state: TripState) -> TripPlan:
     )
 
 
-def initial_state(trip_id: str, request: TripRequest) -> TripState:
+def initial_state(
+    trip_id: str,
+    request: TripRequest,
+    *,
+    profile_id: str = "",
+    origins: dict[str, str] | None = None,
+) -> TripState:
     return TripState(
         trip_id=trip_id,
         request=request,
+        profile_id=profile_id,
+        origins=origins or {},
+        clarified=False,
         phase="intake",
         status="running",
         pending=[],

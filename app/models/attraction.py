@@ -52,6 +52,11 @@ class Attraction(BaseModel):
     suggested_duration_min: int = 120
     score: float = 0.0
     must_visit: bool = Field(default=False, description="来自 TripRequest.must_visit，强制进入行程")
+    visited_note: str = Field(
+        default="",
+        description="L3 履历命中时的说明，如「你 2026-03 去过，已降低推荐权重」。"
+        "降权必须**说出来**——用户看到熟悉的景点排得靠后，得知道是为什么",
+    )
     recall_rank: int | None = Field(
         default=None,
         description="关键字搜索里的最佳名次（0-based）。高德按热度/权重排序，"

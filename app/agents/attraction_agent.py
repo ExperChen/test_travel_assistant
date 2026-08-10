@@ -5,12 +5,15 @@
 
 from __future__ import annotations
 
+from datetime import date
+
 from app.agents.route_planner import DAY_TRIP_RADIUS_M
 from app.core.geo import centroid, haversine_m
 from app.core.logging import get_logger
 from app.models.attraction import DEFAULT_STAY_MINUTES, Attraction
 from app.models.common import CityRef, GeoPoint
 from app.models.errors import PlanWarning
+from app.models.memory import MemorySnapshot
 from app.models.trip import Pace
 from app.tools.amap_poi import poi_detail, poi_keyword
 
@@ -265,9 +268,23 @@ def score_attractions(
     pace: Pace = "standard",
     *,
     avoid: list[str] | None = None,
+    memory: MemorySnapshot | None = None,
+    today: date | None = None,
 ) -> list[Attraction]:
-    """打分并按分数降序返回。必去景点恒定排在最前。"""
+    """打分并按分数降序返回。必去景点恒定排在最前。
+
+    `memory` 带上 L3 履历时，去过的景点按时间**降权**（记忆与追问文档 §3）：
+
+        ≤ 6 个月：× 0.5      ≤ 2 年：× 0.8      更早或没去过：不变
+
+    ⚠️ **只降权，绝不硬过滤。** 去过西湖不代表不想再去；而系统单方面把它从
+    候选里删掉，用户连"为什么没有西湖"都无从知道。降权 + 一句说明才是对的。
+
+    ⚠️ **必去景点豁免。** 用户点名要去，去过一百次也照排——`must_visit`
+    是明确的当次意图，优先级高于任何历史推断。
+    """
     avoid_terms = [t.strip() for t in (avoid or []) if t.strip()]
+    today = today or date.today()
 
     scored: list[Attraction] = []
     for a in pool:
@@ -281,11 +298,21 @@ def score_attractions(
             + W_DISTANCE * _distance_score(a, anchor)
             + W_COMPLETENESS * _completeness(a)
         )
-        scored.append(
-            a.model_copy(
-                update={"score": round(score, 4), "suggested_duration_min": stay_minutes(a, pace)}
-            )
-        )
+
+        note = ""
+        if memory is not None and not a.must_visit:
+            decay = memory.decay_for(a.poi_id, today)
+            if decay < 1.0:
+                score *= decay
+                note = memory.visited_note(a.poi_id, today)
+
+        update: dict = {
+            "score": round(score, 4),
+            "suggested_duration_min": stay_minutes(a, pace),
+        }
+        if note:
+            update["visited_note"] = note
+        scored.append(a.model_copy(update=update))
 
     scored.sort(key=lambda a: (a.must_visit, a.score), reverse=True)
     return scored[:MAX_POOL]

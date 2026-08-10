@@ -19,7 +19,7 @@ from slowapi.middleware import SlowAPIMiddleware
 
 from app.api.errors import install_error_handlers
 from app.api.limits import limiter
-from app.api.v1 import routes_health, routes_trips
+from app.api.v1 import routes_health, routes_profile, routes_trips
 from app.config import settings
 from app.core.logging import get_logger, setup_logging
 from app.services.trip_service import TripService
@@ -67,12 +67,13 @@ def create_app() -> FastAPI:
         allow_origins=settings.cors_origins,
         allow_credentials=False,
         allow_methods=["GET", "POST"],
-        allow_headers=["Content-Type", "X-API-Key", "Last-Event-ID"],
+        allow_headers=["Content-Type", "X-API-Key", "X-Profile-Id", "Last-Event-ID"],
     )
 
     install_error_handlers(app)
     app.include_router(routes_health.router)
     app.include_router(routes_trips.router, prefix="/api/v1")
+    app.include_router(routes_profile.router, prefix="/api/v1")
     return app
 
 
