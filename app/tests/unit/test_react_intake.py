@@ -16,6 +16,7 @@ from app.agents.react_intake import (
     SessionStore,
     parse_decision,
 )
+from app.config import settings
 from app.models.intake import IntakeSession
 from app.models.memory import MemorySnapshot, Profile
 
@@ -173,6 +174,52 @@ class TestReactLoop:
         )
         assert reply.degraded
         assert reply.done
+        assert "上游 500" in reply.degraded_reason
+
+    async def test_timeout_says_which_knob_to_turn(self):
+        """**降级原因必须可行动。**
+
+        用户只看到「模型这轮没答上来」时无从下手——而实测最常见的降级原因
+        就是超时。原因里得点名那个配置项。
+        """
+
+        class Timeout:
+            async def ainvoke(self, messages):
+                raise TimeoutError("timed out")
+
+        reply = await ReactIntakeAgent(llm=Timeout()).run(
+            IntakeSession(session_id="s1"), "去成都", today=TODAY
+        )
+        assert reply.degraded
+        assert "超时" in reply.degraded_reason
+        assert "INTAKE_LLM_TIMEOUT_S" in reply.degraded_reason
+
+    async def test_disabled_llm_is_not_reported_as_a_failure(self, monkeypatch):
+        """模型被关掉是配置，不是故障——两者混为一谈会让人白排查一轮。"""
+        monkeypatch.setattr(settings, "llm_enabled", False)
+        reply = await ReactIntakeAgent().run(
+            IntakeSession(session_id="s1"), "去成都", today=TODAY
+        )
+        assert reply.degraded
+        assert "LLM_ENABLED" in reply.degraded_reason
+
+    async def test_intake_uses_its_own_longer_timeout(self, monkeypatch):
+        """全局 30s 对 intake 太短：单次调用带着工具说明和对话历史，实测常在
+        25~60 秒，超时会静默退回规则解析。"""
+        seen: dict = {}
+
+        def fake_get_llm(*, timeout_s=None, **kw):
+            seen["timeout_s"] = timeout_s
+            raise RuntimeError("不实际调用")
+
+        # conftest 全局关掉了 LLM，这里得开回来才能走到建客户端那一步
+        monkeypatch.setattr(settings, "llm_enabled", True)
+        monkeypatch.setattr("app.providers.llm.get_llm", fake_get_llm)
+        await ReactIntakeAgent().run(
+            IntakeSession(session_id="s1"), "去成都", today=TODAY
+        )
+        assert seen["timeout_s"] == settings.intake_llm_timeout_s
+        assert settings.intake_llm_timeout_s > settings.llm_timeout_s
 
     async def test_finish_normalises_common_field_aliases(self):
         """模型爱写 outbound_date 而不是 outbound_date_text，兜一下。"""

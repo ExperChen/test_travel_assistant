@@ -10,17 +10,14 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta
-from typing import Literal
+from datetime import date, datetime, timedelta
 
 __all__ = [
     "ParsedDate",
-    "DayWindow",
     "parse_relative_date",
     "coerce_date",
     "format_cn",
     "trip_day_count",
-    "build_day_windows",
 ]
 
 _WEEKDAY_CN = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "日": 7, "天": 7}
@@ -175,88 +172,3 @@ def trip_day_count(outbound: date, return_date: date) -> int:
     if return_date < outbound:
         raise ValueError("return_date 不能早于 outbound_date")
     return (return_date - outbound).days + 1
-
-
-# --------------------------------------------------------------------------
-# 每日时间窗（架构文档 §5.4 Step 1）
-# --------------------------------------------------------------------------
-DayKind = Literal["arrival", "full", "departure", "single"]
-
-
-@dataclass(frozen=True)
-class DayWindow:
-    """某一天可用于游览的时间区间。
-
-    用 datetime 而不是 time 存储，避免跨零点落地（航班常见）时的边界歧义。
-    """
-
-    day_index: int  # 从 1 开始
-    day: date
-    start: datetime
-    end: datetime
-    kind: DayKind
-
-    @property
-    def usable_minutes(self) -> int:
-        return max(0, int((self.end - self.start).total_seconds() // 60))
-
-    @property
-    def is_usable(self) -> bool:
-        return self.usable_minutes > 0
-
-
-def build_day_windows(
-    arrive_at: datetime,
-    depart_at: datetime,
-    *,
-    airport_to_hotel_min: int,
-    hotel_to_airport_min: int,
-    checkin_buffer_min: int = 60,
-    predeparture_buffer_min: int = 120,
-    day_start: time = time(9, 0),
-    day_end: time = time(21, 0),
-    departure_day_start: time = time(8, 30),
-) -> list[DayWindow]:
-    """根据落地/返程时间切出逐日时间窗。
-
-    首日从"落地 + 机场到酒店通勤 + 入住办理"之后开始；
-    末日必须在"返程起飞 - 值机安检 buffer - 酒店到机场通勤"之前结束。
-    通勤时长由调用方用高德实测值传入，不在这里估算。
-    """
-    if depart_at < arrive_at:
-        raise ValueError("depart_at 不能早于 arrive_at")
-
-    first_day, last_day = arrive_at.date(), depart_at.date()
-
-    ready_at = arrive_at + timedelta(minutes=airport_to_hotel_min + checkin_buffer_min)
-    must_leave_at = depart_at - timedelta(
-        minutes=predeparture_buffer_min + hotel_to_airport_min
-    )
-
-    if first_day == last_day:
-        start = ready_at
-        end = max(start, must_leave_at)
-        return [DayWindow(1, first_day, start, end, "single")]
-
-    windows: list[DayWindow] = []
-    total_days = (last_day - first_day).days + 1
-
-    for offset in range(total_days):
-        day = first_day + timedelta(days=offset)
-        if offset == 0:
-            start = ready_at
-            end = datetime.combine(day, day_end)
-            kind: DayKind = "arrival"
-        elif offset == total_days - 1:
-            start = datetime.combine(day, departure_day_start)
-            end = must_leave_at
-            kind = "departure"
-        else:
-            start = datetime.combine(day, day_start)
-            end = datetime.combine(day, day_end)
-            kind = "full"
-        # 落地太晚 / 返程太早时窗口会是负的，压成零长度而不是抛错，
-        # 由 route_planner 决定这天不排景点。
-        windows.append(DayWindow(offset + 1, day, start, max(start, end), kind))
-
-    return windows

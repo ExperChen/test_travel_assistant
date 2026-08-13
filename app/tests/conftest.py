@@ -55,10 +55,26 @@ def _no_real_llm(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _pinned_data_sources(monkeypatch):
+    """把数据来源开关钉死成默认值。
+
+    **测试不能依赖本地 `.env`。** 这几个开关（`SERPAPI_MOCK` / `AMAP_MOCK` /
+    `HOTEL_SOURCE`）是给开发与演示用的，谁在自己机器上打开都不该让套件变红——
+    用例是拿 respx 假传输喂真实客户端的，一旦走进模拟分支或换了酒店来源，
+    断言的就不是同一条链路了。
+
+    需要验证模拟层的用例自己 monkeypatch 回来（见 test_serpapi_fake / test_amap_fake）。
+    """
+    monkeypatch.setattr(settings, "serpapi_mock", False)
+    monkeypatch.setattr(settings, "amap_mock", False)
+    monkeypatch.setattr(settings, "hotel_source", "serpapi")
+
+
+@pytest.fixture(autouse=True)
 def _isolated_clients(cfg: Settings):
     """把全局单例换成测试配置的客户端。
 
-    否则图里的节点会去 new 一个读真实 .env 的客户端——测试就依赖开发机环境了。
+    否则工具层会去 new 一个读真实 .env 的客户端——测试就依赖开发机环境了。
     """
     from app.tools import registry
 

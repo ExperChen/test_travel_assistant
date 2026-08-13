@@ -25,6 +25,7 @@ __all__ = [
     "TripHistory",
     "MemorySnapshot",
     "REMEMBERED_FIELDS",
+    "preference_payload",
     "BUDGET_BUCKETS",
     "budget_bucket",
     "bucket_to_budget",
@@ -38,7 +39,6 @@ __all__ = [
 REMEMBERED_FIELDS: tuple[str, ...] = (
     "departure_city",
     "travel_class",
-    "pace",
     "transport",
     "adults",
     "children",
@@ -215,6 +215,24 @@ def budget_bucket(value: int | None) -> str:
         if (low is None or value > low) and (high is None or value <= high):
             return name
     return "any"
+
+
+def preference_payload(request) -> dict:
+    """从最终生效的 `TripRequest` 里摘出该记住的字段（记忆与追问文档 §2）。
+
+    预算**记档位不记数字**：去三亚和去县城的预算不是一回事，只有档位跨行程稳定。
+
+    原来这个函数在 `services/trip_service.py`——图跑完 `status == "done"` 时调用。
+    图删掉之后写入点挪到了 CLI（`main.py` 的自主规划收尾），但"记什么"这件事
+    和谁来触发无关，所以放回记忆模型自己身边。
+    """
+    payload: dict = {}
+    for key in REMEMBERED_FIELDS:
+        value = getattr(request, key, None)
+        if value is None or value == []:
+            continue
+        payload[key] = budget_bucket(value) if key == "budget_per_night" else value
+    return payload
 
 
 def bucket_to_budget(bucket: str) -> int | None:

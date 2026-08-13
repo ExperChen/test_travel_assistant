@@ -36,3 +36,18 @@ data/
 *.db
 *.db-wal
 *.db-shm
+
+# SerpAPI 模拟数据。是生成物，不入库——用下面两个脚本按需重建：
+#   uv run python scripts/dump_mock_flights.py --seed 20260910
+#   uv run python scripts/dump_mock_hotels.py  --seed 20260910
+# 传相同的 --seed 可得到完全一致的结果；不传则票价/房价每次不同。
+fixtures/
+
+conversations/
+
+# 高德路线接口的原始响应转储，用来对比 v3/v5 与各档公交策略。
+# 是排查时按需重跑的产物，不入库——重建：
+#   python scripts/raw_amap_route.py
+#   python scripts/raw_amap_transit.py
+out_v5/
+out_transit/

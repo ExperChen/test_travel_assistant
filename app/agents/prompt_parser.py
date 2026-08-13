@@ -30,7 +30,8 @@ from app.core.metrics import record_call
 from app.models.flight import TravelClass
 from app.models.memory import BUDGET_LABELS, MemorySnapshot, bucket_to_budget
 from app.models.route import TransportMode
-from app.models.trip import Pace, TripRequest
+from app.models.special import detect_needs, normalize_requests
+from app.models.trip import TripRequest
 
 log = get_logger(__name__)
 
@@ -66,10 +67,12 @@ class Extraction(BaseModel):
     children_ages: list[int] = Field(default_factory=list)
     budget_per_night: int | None = None
     travel_class: TravelClass | None = None
-    pace: Pace | None = None
     transport: TransportMode | None = None
     must_visit: list[str] = Field(default_factory=list)
     avoid: list[str] = Field(default_factory=list)
+    special_requests: list[str] = Field(
+        default_factory=list, description="特殊需求：带老人、行李多、不早起、素食…"
+    )
 
 
 Origin = Literal["prompt", "memory", "derived", "default"]
@@ -124,7 +127,6 @@ SYSTEM_PROMPT = """你是行程需求解析器。把用户的话抽取成 JSON�
 - adults: 成人数；children: 儿童数；children_ages: 儿童年龄数组
 - budget_per_night: 每晚住宿预算上限（整数，人民币）
 - travel_class: economy / premium_economy / business / first
-- pace: relaxed / standard / packed（悠闲/标准/紧凑）
 - transport: transit / driving / walking（公交地铁/自驾/步行）
 - must_visit: 必去的景点名数组
 - avoid: 明确不想去的景点名数组
@@ -219,9 +221,23 @@ def loads_json(raw: str) -> dict:
 _CN_DIGITS = {"零": 0, "一": 1, "两": 2, "二": 2, "三": 3, "四": 4,
               "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
 
-_RE_FROM = re.compile(r"(?:从|由)\s*([一-龥]{2,8}?)\s*(?:出发|到|去|飞|走)")
+# 三种句式都要认，用户答"从哪出发"时这几种说法都很常见：
+#   从北京出发 / 由北京飞  → 前置介词
+#   北京出发 / 北京起飞     → 无介词，城市直接打头
+#   出发地北京 / 起点是北京  → 字段名打头
+_RE_FROM = re.compile(
+    r"(?:从|由)\s*([一-龥]{2,8}?)\s*(?:出发|到|去|飞|走)"
+    # 无介词分支必须排除「从/由」打头：否则"算了，从上海出发"会从「，」起匹配，
+    # 把「从上海」整个捕获进来（第一分支本可以正确捕获「上海」，但它起始位置更靠后，
+    # 正则取的是最左匹配）
+    r"|(?:^|[，,。；;\s])(?![从由])([一-龥]{2,8}?)\s*(?:出发|起飞)"
+    r"|(?:出发地|始发地|起点)\s*(?:是|：|:)?\s*([一-龥]{2,8})"
+)
+# 捕获组不能以「去到飞往」开头：「北京起飞去成都」里 `飞` 会先命中前缀，
+# 若不排除，捕获到的就是「去成都」而不是「成都」
 _RE_TO = re.compile(
-    r"(?:去|到|飞往?|前往)\s*([一-龥]{2,8}?)\s*(?:玩|旅游|出差|待|游|逛|[，,。；;]|$)"
+    r"(?:去|到|飞往?|前往)\s*(?![去到飞往])([一-龥]{2,8}?)\s*"
+    r"(?:玩|旅游|出差|待|游|逛|[，,。；;]|$)"
 )
 _RE_DAYS = re.compile(r"(?:玩|待|呆|停留)?\s*([0-9]+|[一二两三四五六七八九十]+)\s*(?:天|日游|晚)")
 _RE_BUDGET = re.compile(
@@ -231,7 +247,7 @@ _RE_BUDGET2 = re.compile(r"预算\s*(?:每晚|一晚)?\s*([0-9]+)")
 _RE_ADULTS = re.compile(r"([0-9]+|[一二两三四五六七八九十]+)\s*(?:个|位|名)?\s*(?:大人|成人|人)")
 # 收尾边界和 _RE_TO 保持一致：不加边界的话「想去成都玩5天」会把整段
 # 「成都玩5天」当成景点名。单轮解析时只是条噪音，但 ReAct 的槽位是**累积**的，
-# 这条垃圾会一直粘在会话里，最后进 route_planner 拿去和景点池强行匹配。
+# 这条垃圾会一直粘在会话里，最后当成必去景点塞进规划任务里。
 _TERM = r"(?:玩|旅游|出差|待|呆|停留|游|逛|看看|[，,。；;、\s]|$)"
 # 负向后顾挡掉「不想去」——否则同一个短语会同时落进 must 和 avoid，自相矛盾
 _RE_MUST = re.compile(
@@ -246,9 +262,6 @@ _DATE_PATTERNS = (
     re.compile(r"大?后天|明天|明日|今天|今日"),
 )
 
-_PACE_WORDS = {"relaxed": ("悠闲", "轻松", "慢", "休闲"),
-               "standard": ("标准", "正常", "适中"),
-               "packed": ("紧凑", "赶", "多逛", "密集")}
 _TRANSPORT_WORDS = {"driving": ("自驾", "开车", "租车", "打车"),
                     "walking": ("步行", "走路", "citywalk", "City Walk"),
                     "transit": ("地铁", "公交", "公共交通")}
@@ -269,6 +282,16 @@ def _to_int(token: str) -> int | None:
     if len(token) == 2 and token[1] == "十":
         return _CN_DIGITS.get(token[0], 0) * 10
     return _CN_DIGITS.get(token)
+
+
+def _first_group(match: re.Match[str] | None) -> str | None:
+    """取多分支正则里第一个命中的捕获组。
+
+    `_RE_FROM` 用 `|` 串了三种句式，命中哪一支就只有那一组非空。
+    """
+    if match is None:
+        return None
+    return next((g for g in match.groups() if g), None)
 
 
 def _clean_city(name: str | None) -> str | None:
@@ -307,7 +330,7 @@ def extract_by_rules(text: str) -> Extraction:
     adults = _RE_ADULTS.search(text)
 
     return Extraction(
-        departure_city=_clean_city(m.group(1) if (m := _RE_FROM.search(text)) else None),
+        departure_city=_clean_city(_first_group(_RE_FROM.search(text))),
         destination_city=_clean_city(m.group(1) if (m := _RE_TO.search(text)) else None),
         outbound_date_text=dates[0] if dates else None,
         return_date_text=dates[1] if len(dates) > 1 else None,
@@ -315,10 +338,11 @@ def extract_by_rules(text: str) -> Extraction:
         adults=_to_int(adults.group(1)) if adults else None,
         budget_per_night=int(budget.group(1)) if budget else None,
         travel_class=_match_keyword(text, _CLASS_WORDS),  # type: ignore[arg-type]
-        pace=_match_keyword(text, _PACE_WORDS),  # type: ignore[arg-type]
         transport=_match_keyword(text, _TRANSPORT_WORDS),  # type: ignore[arg-type]
         must_visit=[m.group(1) for m in _RE_MUST.finditer(text)],
         avoid=[m.group(1) for m in _RE_AVOID.finditer(text)],
+        # 特殊需求靠关键词认，认不出的留给模型——规则层不猜自由文本
+        special_requests=[n.label for n in detect_needs(text)],
     )
 
 
@@ -333,10 +357,10 @@ LABELS = {
     "budget_per_night": "每晚预算",
     "hotel_class": "酒店星级",
     "travel_class": "舱位",
-    "pace": "节奏",
     "transport": "市内交通",
     "must_visit": "必去",
     "avoid": "排除",
+    "special_requests": "特殊需求",
 }
 
 
@@ -474,14 +498,12 @@ def _resolve_date(text: str | None, today: date, draft: TripDraft, key: str) -> 
 DEFAULTS: dict[str, tuple[object, str]] = {
     "adults": (1, "1 位"),
     "travel_class": ("economy", "经济舱"),
-    "pace": ("standard", "标准"),
     "transport": ("transit", "公共交通"),
 }
 
 DISPLAY = {
     "economy": "经济舱", "premium_economy": "超级经济舱",
     "business": "商务舱", "first": "头等舱",
-    "relaxed": "悠闲", "standard": "标准", "packed": "紧凑",
     "transit": "公共交通", "driving": "自驾", "walking": "步行",
 }
 """枚举值给用户看时要用中文——「packed」谁看得懂。"""
@@ -538,10 +560,17 @@ def _resolve_optional(
     values.update(_resolve_hotel_class(add, memory))
 
     # 「想去杭州」里的杭州是目的地，不是景点——同名的必去项要摘掉，
-    # 否则 route_planner 会拿着城市名去景点池里强行匹配
+    # 否则规划任务里会出现「必去：杭州」这种把目的地当景点的要求
     #
     # must_visit / avoid **刻意不进记忆**：它们强绑定目的地，是 L3 的活。
     # 记住"这个人必去兵马俑"然后在去三亚时也加上，是明显的错。
+    # 特殊需求**不进记忆**，理由同 must_visit：素食这类确实稳定，但"带老人"
+    # 「行李多」是这一趟的事，记住了下次单独出差也会被当成带老人
+    if requests := normalize_requests(*extraction.special_requests):
+        values["special_requests"] = requests
+        add(DraftField(key="special_requests", label=LABELS["special_requests"],
+                       value="、".join(requests), origin="prompt"))
+
     cities = {c for c in (extraction.departure_city, extraction.destination_city) if c}
     for key in ("must_visit", "avoid"):
         items = [x for x in getattr(extraction, key) if _clean_city(x) not in cities]

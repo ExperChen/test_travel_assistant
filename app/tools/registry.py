@@ -14,6 +14,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from app.config import settings
 from app.core.exceptions import AppError, UpstreamError
 from app.core.logging import get_logger
 from app.providers.amap_client import AmapClient
@@ -147,16 +148,43 @@ _amap: AmapClient | None = None
 
 
 def serpapi_client() -> SerpApiClient:
+    """SerpAPI 客户端。`SERPAPI_MOCK=true` 时返回模拟替身。
+
+    切换点只有这一处——`FakeSerpApiClient` 与 `SerpApiClient` 同接口，
+    Tool / Agent / 图节点全都感知不到差别。
+    """
     global _serpapi
     if _serpapi is None:
-        _serpapi = SerpApiClient()
+        if settings.serpapi_mock:
+            from app.providers.serpapi_fake import FakeSerpApiClient
+
+            log.warning(
+                "SerpAPI 处于模拟模式，返回的是**假数据**，不会产生真实调用",
+                extra={"seed": settings.mock_seed},
+            )
+            _serpapi = FakeSerpApiClient(seed=settings.mock_seed)  # type: ignore[assignment]
+        else:
+            _serpapi = SerpApiClient()
     return _serpapi
 
 
 def amap_client() -> AmapClient:
+    """高德客户端。`AMAP_MOCK=true` 时返回模拟替身。
+
+    与 `serpapi_client()` 同构——两个都打开就是完全离线。
+    """
     global _amap
     if _amap is None:
-        _amap = AmapClient()
+        if settings.amap_mock:
+            from app.providers.amap_fake import FakeAmapClient
+
+            log.warning(
+                "高德处于模拟模式，返回的是**假数据**，不会产生真实调用",
+                extra={"seed": settings.mock_seed},
+            )
+            _amap = FakeAmapClient(seed=settings.mock_seed)  # type: ignore[assignment]
+        else:
+            _amap = AmapClient()
     return _amap
 
 

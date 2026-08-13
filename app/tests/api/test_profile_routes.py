@@ -12,7 +12,6 @@ import pytest
 import respx
 
 from app.store import MemoryStore, reset_store
-from app.tests.api.conftest import mock_all, read_events, trip_payload
 
 PROFILE = {"X-Profile-Id": "usr_test_1"}
 
@@ -61,9 +60,9 @@ class TestProfileEndpoints:
 
     async def test_patch_with_null_forgets_the_field(self, client):
         await client.patch("/api/v1/profile/me",
-                           json={"key": "pace", "value": "packed"}, headers=PROFILE)
+                           json={"key": "travel_class", "value": "business"}, headers=PROFILE)
         response = await client.patch("/api/v1/profile/me",
-                                      json={"key": "pace", "value": None}, headers=PROFILE)
+                                      json={"key": "travel_class", "value": None}, headers=PROFILE)
         assert response.json()["preferences"] == {}
 
     async def test_patch_rejects_unknown_fields(self, client):
@@ -77,14 +76,14 @@ class TestProfileEndpoints:
 
     async def test_delete_clears_everything(self, client, _isolated_store):
         await client.patch("/api/v1/profile/me",
-                           json={"key": "pace", "value": "packed"}, headers=PROFILE)
+                           json={"key": "travel_class", "value": "business"}, headers=PROFILE)
         assert (await client.delete("/api/v1/profile/me", headers=PROFILE)).status_code == 204
         assert (await client.get("/api/v1/profile/me",
                                  headers=PROFILE)).json()["preferences"] == {}
 
     async def test_profiles_are_isolated(self, client):
         await client.patch("/api/v1/profile/me",
-                           json={"key": "pace", "value": "packed"}, headers=PROFILE)
+                           json={"key": "travel_class", "value": "business"}, headers=PROFILE)
         other = await client.get("/api/v1/profile/me", headers={"X-Profile-Id": "usr_other"})
         assert other.json()["preferences"] == {}
 
@@ -99,17 +98,11 @@ class TestProfileIdValidation:
         assert "X-Profile-Id" in response.json()["message"]
 
     @respx.mock
-    async def test_creating_a_trip_without_profile_still_works(self, client):
-        """不带 profile 头的老调用方一切照旧。
-
-        **必须把 SSE 流读完再退出**：`POST /trips` 起的是后台任务，不排空它
-        就会泄漏到后续用例里继续跑，把全局缓存和熔断器搅乱（实测会让
-        test_providers 里的 8 个用例莫名其妙地失败）。
-        """
-        mock_all()
-        response = await client.post("/api/v1/trips", json=trip_payload())
-        assert response.status_code == 202
-        await read_events(client, response.json()["trip_id"])
+    async def test_parsing_without_a_profile_still_works(self, client):
+        """不带 profile 头的调用方一切照旧——记忆是可选的。"""
+        respx.route(host="testserver").pass_through()
+        response = await client.post("/api/v1/trips/parse", json={"prompt": "想去成都"})
+        assert response.status_code == 200
 
 
 @pytest.mark.asyncio
@@ -164,7 +157,11 @@ class TestChatIntake:
 
     @respx.mock
     async def test_draft_origins_can_drive_the_clarify_step(self, client, monkeypatch):
-        """`/chat` 产出的 origin 正是 `/trips` 的 `origins` 入参。"""
+        """`/chat` 要如实标出哪些值是系统替用户定的。
+
+        调用方据此决定还要不要跟用户确认——分不清"他说的"和"我们猜的"，
+        就只能要么全问一遍、要么全不问。
+        """
         monkeypatch.setattr("app.config.settings.llm_enabled", False)
         respx.route(host="testserver").pass_through()
         response = await client.post(
@@ -173,6 +170,6 @@ class TestChatIntake:
         )
         fields = response.json()["draft"]["fields"]
         origins = {f["key"]: f["origin"] for f in fields}
-        # 没提人数/节奏 → 全是 default，正是 clarify 该问的
+        # 没提人数/交通方式 → 全是 default，正是该跟用户确认的
         assert origins["adults"] == "default"
-        assert origins["pace"] == "default"
+        assert origins["transport"] == "default"

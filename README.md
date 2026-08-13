@@ -1,23 +1,28 @@
 # Better Travel Assistant
 
-输入**时间 + 目的地**（或直接说一句话），产出一份可执行的行程：往返机票（含到达机场）、
-目的地酒店、热门景点召回与打分、逐日路径规划与时间表，最后由模型写成一段说明。
+说一句话，产出一份可执行的行程：往返机票、酒店、景点、逐日路线与时间安排。
 
 ```
 "国庆假期从北京去成都玩4天，预算600一晚，想看大熊猫"
-        ↓ POST /api/v1/trips/parse
+        ↓ intake：多轮补齐参数
 出发地 北京 · 目的地 成都 · 出发 2026-10-01（原话「国庆假期」）
 返程 2026-10-04（按「玩 4 天」推算）· 预算 ¥600 · 必去 大熊猫
+        ↓ planner：模型自主调工具，几十次查询后交付
+# 成都四日行程 …（Markdown）
 ```
 
-后端服务 + API 契约，无前端。目的地限中国大陆。
+命令行程序 + 一组 HTTP 接口，无前端。目的地限中国大陆。
 
-- 编排：LangGraph（航班 / 酒店 / 景点三条分支并行，关键节点 `interrupt()` 问用户）
-- 接口：FastAPI + SSE（创建即返回，进度走事件流）
+- **规划：模型自主调工具。** 查什么、查几次、怎么排全由它决定，代码不做编排。
 - 数据：SerpAPI（Google Flights / Hotels）+ 高德（POI / 路径规划）
-- 模型：只用来把排好的行程翻译成文字；**分天、排序、算时间全是确定性算法**
+- 接口：FastAPI，只提供参数收集与长期记忆——规划在 CLI 上跑
 
-设计文档见 [docs/architecture/system-architecture.md](docs/architecture/system-architecture.md)。
+> ⚠️ **这条路径没有确定性兜底。** 早先那套固定管线（分天聚类、TSP 排序、
+> 营业时间约束求解、返程航班倒推）已经删除，它保证过的东西现在全靠模型自觉：
+> 排出"18:00 去 17:00 关门的景点"是可能的，没有代码会拦下来。
+
+设计文档见 [docs/architecture/system-architecture.md](docs/architecture/system-architecture.md)
+（其中 LangGraph 编排一节已随管线失效）。
 
 ---
 
@@ -48,40 +53,29 @@ Copy-Item .env.example .env           # macOS/Linux: cp .env.example .env
 > **`.env` 已在 `.gitignore` 里，不要提交。** 高德 Key 类型选错（JS/Android/iOS）会一直报 `10001`。
 >
 > 换模型供应商只改 `LLM_BASE_URL` + `LLM_MODEL` + `LLM_API_KEY` 三行，代码一行不动。
-> 完全不想接模型就设 `LLM_ENABLED=false`——说明文案改由确定性模板生成，里面每个数字
-> 都直接取自行程数据，内容和模型路径一致。
+> 完全不想接模型就设 `LLM_ENABLED=false`——参数解析退回规则抽取，但**规划做不了**：
+> 它整条链路就是模型在跑。
 
-## 3. 先跑 demo（推荐从这里开始）
-
-不启服务，直接在终端看完整输出。
+## 3. 直接跑（推荐从这里开始）
 
 ```bash
-# ⓪ 一句话说需求。--prompt 不带值 = 启动后再敲，省掉 shell 引号转义
-python scripts/demo_trip.py --prompt --parse-only     # 只看解析结果，零额度
-python scripts/demo_trip.py --prompt --dry-run        # 解析完接着排行程，仍是零额度
-python scripts/demo_trip.py --prompt                  # 真实规划，约 5 次 SerpAPI
+python main.py                                   # 多轮对话，说到哪儿算哪儿
+python main.py "9月20号从北京去成都玩4天"          # 带一句话开场
+python main.py --offline                         # 全假数据：零额度、零网络
+python main.py -v                                # 连工具返回的原始 JSON 一起打
+```
 
-# ① 零额度：全假数据，先看输出长什么样
-python scripts/demo_trip.py 杭州 --dry-run
+对话一直continue到你输入 `q`；规划完可以接着说「改成5天」「换成杭州」，
+前面说过的槽位都还在，不用从头讲一遍。每轮对话都会落一份
+`conversations/<时间戳>.json`（含完整 ReAct 轨迹）和一份同名 `.md`。
 
-# ② 真实数据：约 5 次 SerpAPI + 约 20 次高德
-python scripts/demo_trip.py 成都 --days 5
-
-# ③ 手动回答"选哪个机场 / 哪家酒店"
-python scripts/demo_trip.py 成都 --interactive
-
-# ④ 只跑景点召回链路——只花高德额度，不碰 SerpAPI
-python scripts/demo_attractions.py 成都 --verbose
-
-# ⑤ 航班对不上时：原始响应 vs 我们解析的结果，并排看
+```bash
+# 航班对不上时：原始响应 vs 我们解析的结果，并排看
 python scripts/debug_flights.py PEK CTU --return-leg
 ```
 
-常用参数：`--from PEK`（出发地，填 IATA 三字码可省一次额度）、`--days`、`--start-in`、
-`--budget 800`（每晚上限）、`--pace relaxed|standard|packed`、
-`--transport transit|driving|walking`、`--must 西湖`、`--avoid 宋城`、`--verbose`。
-
 > 相同参数 1 小时内命中缓存，不再扣额度，反复调同一条行程是安全的。
+> 一次自主规划约 20~35 次工具调用、耗时分钟级。
 
 ## 4. 起服务
 
@@ -132,30 +126,24 @@ curl localhost:8000/api/v1/trips/trp_xxx
 > 到服务端就成了乱码，返回 `There was an error parsing the body`。把 JSON 存成 UTF-8 文件、
 > 用 `-d @body.json` 就好了；或者直接在 `/docs` 里点。
 
-断线重连带上 `Last-Event-ID` 头即可补发漏掉的事件。
-问题超过 `INTERRUPT_TIMEOUT_S`（默认 600 秒）没人回答，后台清扫任务会按默认值自动放行——
-用户关掉页面不会让行程永久卡在 `waiting_input`。
-
 设了 `APP_API_KEY` 的话，每个请求都要带 `-H 'X-API-Key: ...'`；留空则关闭鉴权（仅限本地开发）。
 
-限流：创建 10 次/分钟，读取 60 次/分钟。创建限得严是因为**每次创建烧 5 次 SerpAPI**，
-按读接口的速率放行，一分钟就能把整月免费额度打掉 1.2 倍。
+限流：`/parse` 与 `/chat` 10 次/分钟，读取 60 次/分钟。前者限得严是因为每次都要打一轮模型。
 
 ## 5. 测试与检查
 
 ```bash
-pytest                            # 517 个用例，全程 mock，不碰真实 API，约 11 秒
+pytest                            # 545 个用例，全程 mock，不碰真实 API，约 8 秒
 ruff check app scripts
 ```
 
 分层跑：
 
-| 目录 | 个数 | 管什么 | 耗时 |
-| --- | --- | --- | --- |
-| `app/tests/unit` | 340 | 纯函数：日期、坐标、打分、排期、需求解析 | 2.4s |
-| `app/tests/contract` | 57 | 上游响应 → 内部模型的解析，用 `docs/` 里摘的真实响应快照 | 0.6s |
-| `app/tests/e2e` | 82 | 全 mock provider 跑通整张图：并行、中断恢复、超时、兜底链 | 5.7s |
-| `app/tests/api` | 38 | HTTP 契约：SSE、`/answer`、鉴权、限流、超时清扫 | 2.2s |
+| 目录 | 个数 | 管什么 |
+| --- | --- | --- |
+| `app/tests/unit` | 449 | 纯函数与单模块：日期、坐标、需求解析、记忆、自主 agent 的护栏、终端渲染 |
+| `app/tests/contract` | 65 | 上游响应 → 内部模型的解析，用 `docs/` 里摘的真实响应快照 |
+| `app/tests/api` | 31 | HTTP 契约：参数收集、记忆、鉴权、限流 |
 
 ```bash
 pytest app/tests/unit                          # 只跑某一层
@@ -165,7 +153,7 @@ pytest -x --lf                                 # 只重跑上次失败的，第�
 ```
 
 **测试绝不会碰真实 API。** [conftest.py](app/tests/conftest.py) 里三个 autouse fixture 兜着底：
-`_isolated_clients` 把全局客户端换成假 key 的实例（否则节点会去 new 一个读真实 `.env` 的），
+`_isolated_clients` 把全局客户端换成假 key 的实例（否则工具层会去 new 一个读真实 `.env` 的），
 `_no_real_llm` 关掉模型（要验模型行为的用例显式注入 `FakeLLM`），`_clean_cache` 防止用例
 之间通过全局缓存互相污染。真实 API 的验证走 demo 脚本，不放进测试。
 
@@ -180,7 +168,8 @@ pytest -x --lf                                 # 只重跑上次失败的，第�
 | 航班结果很怪（中转比直飞贵） | 试 `--gl cn` 对照。销售地会换掉整个结果集，依据见[接口文档 §4.1](docs/flight-agent/serpapi-google-flights-api.md) |
 | PowerShell 里输出是乱码 | 先 `chcp 65001`。脚本本身已强制 UTF-8 输出，乱的是 PowerShell 按 GBK 重新解码管道 |
 | 高德返回 `10001` | Key 类型不对，必须是「Web 服务 API」 |
-| 每次规划都卡 30 秒 | 模型服务连不通。设 `LLM_ENABLED=false` 跳过 |
+| 对话里出现"模型这轮没答上来，已退回规则解析" | 后面那句会说明具体原因。最常见的是超时——`INTAKE_LLM_TIMEOUT_S` 调大 |
 | Gemini 报 `FAILED_PRECONDITION: User location is not supported` | Google 按服务端 IP 归属地拒绝，中国大陆直连不通。用 `LLM_PROVIDER=openai_compatible`（默认），或挂支持地区的代理 |
 | `CITY_NOT_FOUND` / `DESTINATION_UNSUPPORTED` | 目的地限中国大陆；港澳台及省级行政区（如"广东"）不受支持，要填具体城市 |
-| SerpAPI 额度告急 | `/health` 看缓存命中率；demo 优先用 `--dry-run`，只调景点链路用 `demo_attractions.py` |
+| SerpAPI 额度告急 | 用 `python main.py --offline` 走全假数据；需要保险时设 `AGENT_SERPAPI_BUDGET=6` 给自主循环上限 |
+| 自主规划跑很久 / 步数用尽 | 正常耗时分钟级、20~35 次工具调用。`AGENT_MAX_STEPS` 是硬顶，到顶会带着已有结果收尾 |

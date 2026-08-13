@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, datetime
 
 import pytest
 from pydantic import ValidationError
 
 from app.models.common import CityRef, GeoPoint, LocaleCtx, QuotaCounter
 from app.models.errors import ApiError, ErrorCode
-from app.models.events import InterruptQuestion, QuestionOption, TripEvent
 from app.models.flight import (
     Airport,
     AirportTime,
@@ -100,9 +99,8 @@ class TestTripRequest:
     def test_minimal_request(self):
         req = self._req()
         assert req.adults == 1
-        assert req.pace == "standard"
         assert req.transport == "transit"
-        assert not req.auto_select
+        assert req.special_requests == []
 
     def test_nights_and_travel_days(self):
         req = self._req()
@@ -209,7 +207,7 @@ class TestFlightItinerary:
         )
 
     def test_arrival_time_comes_from_the_last_leg(self):
-        # route_planner 的首日时间窗全靠这个值
+        # 首日能从几点开始安排全靠这个值
         assert self._itinerary().arrives_at == datetime(2026, 8, 10, 14, 15)
 
     def test_departure_time_comes_from_the_first_leg(self):
@@ -299,54 +297,7 @@ class TestHotelSearchParams:
             assert key not in params
 
 
-class TestInterruptQuestion:
-    def _options(self):
-        return [
-            QuestionOption(key="PVG", label="[PVG] 浦东国际机场"),
-            QuestionOption(key="SHA", label="[SHA] 虹桥国际机场"),
-        ]
-
-    def test_default_falls_back_to_first_option(self):
-        q = InterruptQuestion.build("flight.arrival_airport", "选哪个机场？", self._options())
-        assert q.default == "PVG"
-
-    def test_explicit_default(self):
-        q = InterruptQuestion.build(
-            "flight.arrival_airport", "选哪个机场？", self._options(), default="SHA"
-        )
-        assert q.default == "SHA"
-
-    def test_rejects_empty_options(self):
-        # 没有选项就没有默认值，超时后行程会永久卡死
-        with pytest.raises(ValueError):
-            InterruptQuestion.build("x", "?", [])
-
-    def test_accepts_only_listed_keys(self):
-        q = InterruptQuestion.build("x", "?", self._options())
-        assert q.accepts("SHA")
-        assert not q.accepts("PEK")
-
-    def test_expiry(self):
-        q = InterruptQuestion.build("x", "?", self._options(), timeout_s=600)
-        assert not q.is_expired
-        expired = q.model_copy(
-            update={"expires_at": datetime.now(UTC) - timedelta(seconds=1)}
-        )
-        assert expired.is_expired
-
-
-class TestEventsAndErrors:
-    def test_event_helpers_carry_seq_and_type(self):
-        evt = TripEvent.stage(3, "flight", "正在搜索往返航班…")
-        assert evt.seq == 3
-        assert evt.type == "stage"
-        assert evt.data == {"phase": "flight", "label": "正在搜索往返航班…"}
-
-    def test_question_event_is_json_serialisable(self):
-        q = InterruptQuestion.build("x", "?", [QuestionOption(key="a", label="A")])
-        evt = TripEvent.question(1, q)
-        assert isinstance(evt.data["expires_at"], str)
-
+class TestErrors:
     def test_api_error_fills_user_message_and_retriable(self):
         err = ApiError.of(ErrorCode.UPSTREAM_TIMEOUT, "httpx read timeout on google_flights")
         assert err.retriable

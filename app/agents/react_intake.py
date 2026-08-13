@@ -1,9 +1,9 @@
 """ReAct 参数收集 Agent（Flight ReAct Agent 设计文档 §2 / §6）。
 
-**这是本项目唯一的 agent 循环。** 其余的 `app/agents/*` 都是确定性算法——
-行程骨架用算法算是刻意的决策（见 `route_planner` 文件头），这里不改变那条纪律。
-ReAct 只负责**参数收集**：把多轮对话里零散说出来的信息拼成一个完整的
-`TripRequest`，并主动问缺的部分。
+项目里有两个 agent，分工是清楚的：**这一个只负责参数收集**，把多轮对话里
+零散说出来的信息拼成一个完整的 `TripRequest` 并主动问缺的部分；规划本身归
+`planner_agent`。分开是因为两者的成本差着数量级——intake 每轮几秒、不烧
+SerpAPI，规划一次几分钟、几十次工具调用。
 
     Thought  → 看当前已收集到什么、还缺什么
     Action   → 调工具（算日期 / 校验城市 / 查记忆）
@@ -13,9 +13,9 @@ ReAct 只负责**参数收集**：把多轮对话里零散说出来的信息拼�
 
 ## 三条边界
 
-1. **不调 SerpAPI。** 机场消歧留在图里的 `flight_departure` / `flight_arrival`
-   节点——那里已经有成熟的中断问答，而 SerpAPI 免费额度只有 250 次/月，
-   在参数收集阶段就烧它是浪费。本 Agent 的工具只用高德（5000/天）和纯计算。
+1. **不调 SerpAPI。** 免费额度只有 250 次/月，在参数收集阶段就烧它是浪费——
+   用户可能聊了两句就走了。机场消歧留给 `planner_agent`，那时才真的要用。
+   本 Agent 的工具只用高德（5000/天）和纯计算。
 2. **日期一律由代码算。** `resolve_date` 工具包的是 `core.dates`，模型只负责
    把原话摘出来。LLM 做日期算术出了名地不可靠，而算错日期意味着整条链路去查
    错日子的机票——错得既贵又不显眼。
@@ -116,8 +116,7 @@ async def _resolve_date_tool(text: str, today: str = "", **_: Any) -> dict[str, 
     {"name": "城市名"},
 )
 async def _lookup_city_tool(name: str, **_: Any) -> dict[str, Any]:
-    from app.graph.nodes.resolve_city import is_too_broad, pick_city
-    from app.tools.amap_poi import district_lookup
+    from app.tools.amap_poi import district_lookup, is_too_broad, pick_city
 
     try:
         candidates = await district_lookup(str(name))
@@ -179,8 +178,8 @@ SYSTEM_PROMPT = """你是行程需求收集助手。通过多轮对话把用户�
 必需：departure_city（出发城市）、destination_city（目的地城市）、
       outbound_date_text（出发日期原话）、以及 return_date_text 或 travel_days 之一
 可选：adults、children、children_ages、budget_per_night、travel_class、
-      pace（relaxed/standard/packed）、transport（transit/driving/walking）、
-      must_visit、avoid
+      transport（transit/driving/walking）、must_visit、avoid、
+      special_requests（特殊需求，字符串数组）
 
 ## 可用工具
 {tools}
@@ -207,6 +206,9 @@ Finish: <JSON 对象，含所有已收集字段>
 4. 已经问过但用户没答的字段，**不要再问第二次**——他不想说。
 5. 必需字段齐了就 Finish，可选字段缺了不影响开始规划。
 6. 绝不编造用户没说过的信息。
+7. 用户提到带老人/带小孩/行李多/不早起/饮食忌口/带宠物这类**特殊需求**时，
+   一律收进 special_requests，用他自己的说法。这些会真的改变行程安排，
+   漏掉比问一遍代价大——但**不要为此专门追问**，他不说就是没有。
 
 ## 当前状态
 今天是 {today}。
@@ -283,6 +285,33 @@ def parse_decision(raw: str) -> _Decision:
     return _Decision(thought=thought, response=text or "能再说详细一点吗？")
 
 
+# ---------------------------------------------------------------- 降级原因
+
+_EXC_HINTS: tuple[tuple[str, str], ...] = (
+    ("timeout", "模型响应超时（当前上限 {timeout:.0f}s），可调大 INTAKE_LLM_TIMEOUT_S"),
+    ("ratelimit", "被模型服务限流，稍等再试"),
+    ("authentication", "模型鉴权失败，检查 LLM_API_KEY"),
+    ("permissiondenied", "模型服务拒绝访问，检查账号权限或 LLM_MODEL"),
+    ("connection", "连不上模型服务，检查网络或 LLM_BASE_URL"),
+    ("notfound", "模型不存在，检查 LLM_MODEL"),
+)
+
+
+def _explain(exc: BaseException) -> str:
+    """把异常翻译成用户能据以行动的一句话。
+
+    只报类型名（`APITimeoutError`）等于没说——用户看不出该改哪个配置。
+    匹配按类名做而不按 `isinstance`：openai / httpx / google 三家 SDK 的异常
+    没有共同基类，逐个 import 会把这个模块和某一家 SDK 绑死。
+    """
+    cls = type(exc).__name__.lower()
+    detail = (str(exc) or type(exc).__name__).strip()
+    for needle, hint in _EXC_HINTS:
+        if needle in cls:
+            return hint.format(timeout=settings.intake_llm_timeout_s)
+    return f"模型调用失败：{detail[:200]}"
+
+
 # ---------------------------------------------------------------- Agent
 
 
@@ -311,17 +340,29 @@ class ReactIntakeAgent:
         session.record("user", text)
         session.steps = []
 
-        if not settings.react_enabled or (self._llm is None and not settings.llm_enabled):
-            return self._fallback(session, text, memory=memory, today=today)
+        # 先用规则把这句话里能认出的槽位收进来，**不等模型 Finish**。
+        # 否则模型选择继续追问（Response）的那些轮次里槽位一直是空的，
+        # 对外报的 `missing` 就会把用户刚说过的字段也列成"还缺"——
+        # 用户刚说完"想去成都"，界面却显示还缺目的地。
+        # 模型的 Finish 载荷随后会覆盖它，所以规则抽错了也能被纠正。
+        filled = session.merge(extract_by_rules(text))
+        # 规则什么都没抽到时，看看这是不是在裸答上一轮的追问（"北京"）
+        if not filled:
+            _fill_awaiting(session, text)
+
+        if not settings.react_enabled:
+            return self._fallback(session, text, memory=memory, today=today,
+                                  reason="REACT_ENABLED=false，本就走规则解析")
+        if self._llm is None and not settings.llm_enabled:
+            return self._fallback(session, text, memory=memory, today=today,
+                                  reason="LLM_ENABLED=false，未启用模型")
 
         try:
             return await self._loop(session, memory=memory, today=today)
         except Exception as exc:  # noqa: BLE001 —— 对话不能因为模型抽风就断掉
-            log.warning(
-                "ReAct 循环失败，退回规则抽取",
-                extra={"err": str(exc) or type(exc).__name__},
-            )
-            return self._fallback(session, text, memory=memory, today=today)
+            reason = _explain(exc)
+            log.warning("ReAct 循环失败，退回规则抽取", extra={"err": reason})
+            return self._fallback(session, text, memory=memory, today=today, reason=reason)
 
     # ------------------------------------------------------------------
     async def _loop(
@@ -467,6 +508,7 @@ class ReactIntakeAgent:
         *,
         memory: MemorySnapshot | None,
         today: date,
+        reason: str = "",
     ) -> IntakeReply:
         """模型不可用时的确定性路径。
 
@@ -499,6 +541,7 @@ class ReactIntakeAgent:
             draft=draft if draft.ok else None,
             missing=missing,
             degraded=True,
+            degraded_reason=reason,
             steps=session.steps,
         )
 
@@ -512,18 +555,115 @@ class ReactIntakeAgent:
         return seen
 
     def _mark_asked(self, session: IntakeSession, reply: str) -> None:
-        """回复里提到哪个槽位，就记下"问过了"。
+        """回复里提到哪个槽位，就记下"问过了"，并记住**当前在等哪个字段**。
 
         用关键词而不是让模型自报——模型报不准，而重复追问是最招人烦的失败方式。
         """
+        session.awaiting = ""
         for label in SLOT_LABELS.values():
             if label in reply and label not in session.asked:
                 session.asked.append(label)
 
+        # 「出发」「出发地」都能命中「出发日期」的标签，所以问句关键词单独判，
+        # 按最长匹配挑——否则"从哪个城市出发？"会被当成在问日期
+        hits = [(kw, key) for kw, key in _ASK_KEYWORDS.items() if kw in reply]
+        if hits:
+            session.awaiting = max(hits, key=lambda kv: len(kv[0]))[1]
+
     def _default_llm(self):
+        """intake 专用的模型客户端。
+
+        超时用 `intake_llm_timeout_s`（默认 120s）而不是全局的 30s：
+        一轮 intake 可能连着跑好几次模型调用（查记忆 → 想 → 再问），
+        单次带着工具说明和对话历史，实测常在 20~60 秒。30s 会频繁超时，
+        而超时的表现就是静默退回规则解析。
+        """
         from app.providers.llm import get_llm
 
-        return get_llm()
+        return get_llm(timeout_s=settings.intake_llm_timeout_s)
+
+
+_ASK_KEYWORDS: dict[str, str] = {
+    "从哪": "departure_city",
+    "哪个城市出发": "departure_city",
+    "出发地": "departure_city",
+    "哪里出发": "departure_city",
+    "想去哪": "destination_city",
+    "目的地": "destination_city",
+    "去哪个城市": "destination_city",
+    "哪天出发": "outbound_date_text",
+    "什么时候出发": "outbound_date_text",
+    "出发日期": "outbound_date_text",
+    "玩几天": "return_date_text",
+    "待几天": "return_date_text",
+    "哪天返程": "return_date_text",
+    "返程": "return_date_text",
+    "几天": "return_date_text",
+}
+"""问句关键词 → 它在问哪个槽位。用来把用户"光秃秃一个北京"对上号。"""
+
+_BARE_ANSWER_MAX = 12
+"""超过这个长度就不当作"对追问的裸答案"了——那更像一句完整的话，交给规则/模型。"""
+
+
+def _fill_awaiting(session: IntakeSession, text: str) -> bool:
+    """把"光秃秃的回答"填进上一轮追问的槽位。返回是否填了。
+
+    用户回答"从哪个城市出发？"时最自然的说法就是**「北京」**两个字，
+    任何抽取规则都够不着它——只能靠"刚问的是哪个字段"把它对上号。
+    这是多轮对话里最常见的一种输入，不处理的话 `missing` 会一直挂着已经答过的字段。
+    """
+    key = session.awaiting
+    if not key or len(text) > _BARE_ANSWER_MAX:
+        return False
+    if getattr(session.collected, key, None):
+        return False  # 已经有值了，别覆盖
+
+    cleaned = text.strip().strip("。，,.！!？? ")
+    if not cleaned:
+        return False
+
+    if any(word in cleaned for word in _HESITATION):
+        return False  # "还没想好""随便""都行"——这不是答案
+
+    if key in ("departure_city", "destination_city"):
+        # 城市名不该带数字；"9月5号"这类日期短语要挡掉
+        if any(ch.isdigit() for ch in cleaned):
+            return False
+        city = _strip_particles(cleaned).removesuffix("市")
+        # 中文城市名最长也就"呼和浩特""乌鲁木齐"四个字，留到 6 已经很宽松了。
+        # 再长的多半是一句话而不是地名（"还没想好呢再说"）
+        if not 2 <= len(city) <= 6:
+            return False
+        setattr(session.collected, key, city)
+    else:
+        setattr(session.collected, key, cleaned)
+    session.awaiting = ""
+    return True
+
+
+_HESITATION = ("不知道", "没想好", "再说", "算了", "随便", "都行", "无所谓", "看情况")
+"""这些词出现就说明用户没在回答问题，别把整句话塞进槽位。"""
+
+_LEADING = ("就", "是", "在", "从", "我在", "我从", "我", "去", "到")
+_TRAILING = ("吧", "呀", "啦", "了", "的", "好了", "可以")
+
+
+def _strip_particles(text: str) -> str:
+    """剥掉口语里的语气词：「就上海吧」→「上海」。
+
+    只剥一层，且剥完必须还剩至少 2 个字——「就」「吧」本身不该被当成城市名，
+    但「三亚」这种两字城市也不能被误伤。
+    """
+    for word in _LEADING:
+        if text.startswith(word) and len(text) - len(word) >= 2:
+            text = text[len(word):]
+            break
+    for word in _TRAILING:
+        if text.endswith(word) and len(text) - len(word) >= 2:
+            text = text[: -len(word)]
+            break
+    return text
 
 
 _ASK_TEXT: dict[str, str] = {
@@ -547,11 +687,17 @@ def _coerce(payload: dict) -> dict:
         "destination": "destination_city",
         "days": "travel_days",
         "passengers": "adults",
+        "special_needs": "special_requests",
+        "special_requirements": "special_requests",
+        "notes": "special_requests",
     }
     out = dict(payload)
     for wrong, right in alias.items():
         if wrong in out and right not in out:
             out[right] = out.pop(wrong)
+    # 特殊需求写成一句话是常事（"带着老人和小孩"），列表字段收不下字符串
+    if isinstance(out.get("special_requests"), str):
+        out["special_requests"] = [out["special_requests"]]
     return {k: v for k, v in out.items() if k in Extraction.model_fields}
 
 

@@ -6,12 +6,11 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, time
+from datetime import date, datetime
 
 import pytest
 
 from app.core.dates import (
-    build_day_windows,
     coerce_date,
     format_cn,
     parse_relative_date,
@@ -117,70 +116,3 @@ class TestFormatting:
     def test_trip_day_count_rejects_reversed_range(self):
         with pytest.raises(ValueError):
             trip_day_count(date(2026, 8, 16), date(2026, 8, 10))
-
-
-class TestBuildDayWindows:
-    def _windows(self, arrive, depart, **kw):
-        return build_day_windows(
-            arrive,
-            depart,
-            airport_to_hotel_min=kw.pop("a2h", 60),
-            hotel_to_airport_min=kw.pop("h2a", 50),
-            **kw,
-        )
-
-    def test_typical_trip_shape(self):
-        windows = self._windows(datetime(2026, 8, 10, 14, 30), datetime(2026, 8, 16, 19, 0))
-
-        assert len(windows) == 7
-        assert [w.kind for w in windows] == ["arrival", *["full"] * 5, "departure"]
-        assert [w.day_index for w in windows] == [1, 2, 3, 4, 5, 6, 7]
-
-    def test_first_day_starts_after_commute_and_checkin(self):
-        windows = self._windows(datetime(2026, 8, 10, 14, 30), datetime(2026, 8, 16, 19, 0))
-        # 14:30 落地 + 60min 通勤 + 60min 入住 = 16:30
-        assert windows[0].start == datetime(2026, 8, 10, 16, 30)
-        assert windows[0].end == datetime(2026, 8, 10, 21, 0)
-        assert windows[0].usable_minutes == 270
-
-    def test_last_day_ends_before_flight_minus_buffers(self):
-        windows = self._windows(datetime(2026, 8, 10, 14, 30), datetime(2026, 8, 16, 19, 0))
-        # 19:00 起飞 - 120min 值机安检 - 50min 通勤 = 16:10
-        assert windows[-1].end == datetime(2026, 8, 16, 16, 10)
-        assert windows[-1].start == datetime(2026, 8, 16, 8, 30)
-
-    def test_middle_days_use_default_window(self):
-        windows = self._windows(datetime(2026, 8, 10, 14, 30), datetime(2026, 8, 16, 19, 0))
-        for w in windows[1:-1]:
-            assert w.start.time() == time(9, 0)
-            assert w.end.time() == time(21, 0)
-            assert w.usable_minutes == 720
-
-    def test_early_return_flight_yields_unusable_last_day(self):
-        # 上午 10 点的返程航班：扣掉 buffer 后根本没时间安排景点，
-        # 窗口必须压成 0 而不是负数，让 route_planner 直接跳过这天
-        windows = self._windows(datetime(2026, 8, 10, 14, 30), datetime(2026, 8, 16, 10, 0))
-        assert windows[-1].usable_minutes == 0
-        assert not windows[-1].is_usable
-
-    def test_late_night_arrival_yields_unusable_first_day(self):
-        windows = self._windows(datetime(2026, 8, 10, 23, 30), datetime(2026, 8, 16, 19, 0))
-        assert windows[0].usable_minutes == 0
-
-    def test_same_day_round_trip_is_a_single_window(self):
-        windows = self._windows(datetime(2026, 8, 10, 8, 0), datetime(2026, 8, 10, 22, 0))
-        assert len(windows) == 1
-        assert windows[0].kind == "single"
-        # 08:00 + 120min = 10:00 起，22:00 - 170min = 19:10 止
-        assert windows[0].start == datetime(2026, 8, 10, 10, 0)
-        assert windows[0].end == datetime(2026, 8, 10, 19, 10)
-
-    def test_departure_before_arrival_raises(self):
-        with pytest.raises(ValueError):
-            self._windows(datetime(2026, 8, 16, 10, 0), datetime(2026, 8, 10, 10, 0))
-
-    def test_windows_never_go_backwards(self):
-        windows = self._windows(datetime(2026, 8, 10, 22, 0), datetime(2026, 8, 11, 6, 0))
-        for w in windows:
-            assert w.end >= w.start
-            assert w.usable_minutes >= 0

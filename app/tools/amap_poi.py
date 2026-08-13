@@ -29,6 +29,8 @@ __all__ = [
     "district_lookup",
     "regeo_batch",
     "District",
+    "pick_city",
+    "is_too_broad",
     "DEFAULT_SHOW_FIELDS",
 ]
 
@@ -253,6 +255,33 @@ class District(BaseModel):
     citycode: str = ""
     level: str = ""
     center: GeoPoint | None = None
+
+
+def pick_city(districts: list[District]) -> District | None:
+    """从行政区查询结果里挑出最合适的一条（按 city → 直辖市 → 区县 → 省 的优先级）。
+
+    只负责"选哪条"，不负责"这条能不能用"——境外和省级的判断由调用方做，
+    这样才能给出各自准确的错误信息，而不是一律回一句"没找到这个城市"。
+    """
+    usable = [d for d in districts if d.center]
+    if not usable:
+        return None
+
+    for level_filter in (
+        lambda d: d.level == "city",
+        # 直辖市的 level 是 province，但 citycode 非空（北京 "010"）；真省份为空
+        lambda d: d.level == "province" and bool(d.citycode),
+        lambda d: d.level == "district",
+        lambda d: True,
+    ):
+        if matched := [d for d in usable if level_filter(d)]:
+            return matched[0]
+    return None
+
+
+def is_too_broad(district: District) -> bool:
+    """省 / 国家级结果：能定位但不能当作行程目的地。"""
+    return district.level in ("province", "country") and not district.citycode
 
 
 @tool(

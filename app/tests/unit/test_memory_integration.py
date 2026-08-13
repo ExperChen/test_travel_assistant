@@ -1,27 +1,21 @@
-"""记忆接入解析与打分的行为。
+"""记忆接入参数解析的行为。
 
-核心不变量只有两条，两条都在这里守着：
+核心不变量：**记忆只填空，绝不覆盖用户这次说的话。**
 
-    记忆只填空，绝不覆盖用户这次说的话
-    L3 只降权，绝不硬过滤
+原来这里还有一半在验 L3（去过的景点只降权、绝不硬过滤）——那套打分随
+`attraction_agent` 一起删了。景点现在由模型自己挑，"去过"这件事没有了
+写入点，也没有了消费点。
 """
 
 from __future__ import annotations
 
 from datetime import date
 
-import pytest
-
-from app.agents.attraction_agent import score_attractions
 from app.agents.prompt_parser import Extraction, resolve
-from app.models.attraction import Attraction
-from app.models.common import GeoPoint
-from app.models.memory import MemorySnapshot, Profile
+from app.models.memory import MemorySnapshot, Profile, preference_payload
 from app.models.trip import TripRequest
-from app.services.trip_service import preference_payload
 
 TODAY = date(2026, 8, 7)
-ANCHOR = GeoPoint.gcj02(104.07, 30.67)
 
 
 def _confident(**values) -> MemorySnapshot:
@@ -67,9 +61,9 @@ class TestMemoryFillsOnlyGaps:
         draft = resolve("9月5号从北京去成都玩5天",
                         Extraction(departure_city="北京", destination_city="成都",
                                    outbound_date_text="9月5号", travel_days=5),
-                        today=TODAY, memory=_confident(pace="relaxed"))
-        assert draft.request.pace == "relaxed"
-        assert next(f for f in draft.fields if f.key == "pace").origin == "memory"
+                        today=TODAY, memory=_confident(transport="driving"))
+        assert draft.request.transport == "driving"
+        assert next(f for f in draft.fields if f.key == "transport").origin == "memory"
 
     def test_budget_bucket_becomes_the_upper_bound(self):
         draft = resolve("9月5号从北京去成都玩5天",
@@ -115,56 +109,3 @@ class TestPreferencePayload:
         assert "outbound_date" not in payload
         assert "must_visit" not in payload
         assert payload["departure_city"] == "北京"
-
-
-def _poi(poi_id: str, name: str, *, must: bool = False) -> Attraction:
-    return Attraction(
-        poi_id=poi_id, name=name, location=ANCHOR,
-        typecode="110200", rating=4.5, recall_rank=0, must_visit=must,
-    )
-
-
-class TestVisitDecayInScoring:
-    def test_recent_visit_is_downranked_not_removed(self):
-        """去过西湖不代表不想再去——降权可以，删掉不行。"""
-        pool = [_poi("B001", "都江堰"), _poi("B002", "青城山")]
-        memory = MemorySnapshot(visited={"B001": date(2026, 6, 1)})
-
-        scored = score_attractions(pool, ANCHOR, memory=memory, today=TODAY)
-        assert {a.poi_id for a in scored} == {"B001", "B002"}  # 一个都没少
-        by_id = {a.poi_id: a for a in scored}
-        assert by_id["B001"].score < by_id["B002"].score
-
-    def test_the_downrank_is_explained(self):
-        """用户看到熟悉的景点排得靠后，得知道是为什么。"""
-        memory = MemorySnapshot(visited={"B001": date(2026, 6, 1)})
-        scored = score_attractions([_poi("B001", "都江堰")], ANCHOR,
-                                   memory=memory, today=TODAY)
-        assert "2026-06" in scored[0].visited_note
-
-    def test_must_visit_is_exempt(self):
-        """用户点名要去，去过一百次也照排。"""
-        memory = MemorySnapshot(visited={"B001": date(2026, 6, 1)})
-        scored = score_attractions([_poi("B001", "都江堰", must=True)], ANCHOR,
-                                   memory=memory, today=TODAY)
-        assert scored[0].visited_note == ""
-        no_memory = score_attractions([_poi("B001", "都江堰", must=True)], ANCHOR,
-                                      today=TODAY)
-        assert scored[0].score == no_memory[0].score
-
-    @pytest.mark.parametrize(
-        ("visited_on", "factor"),
-        [(date(2026, 6, 1), 0.5), (date(2025, 6, 1), 0.8), (date(2019, 1, 1), 1.0)],
-    )
-    def test_decay_bands(self, visited_on, factor):
-        base = score_attractions([_poi("B001", "都江堰")], ANCHOR, today=TODAY)[0].score
-        decayed = score_attractions(
-            [_poi("B001", "都江堰")], ANCHOR,
-            memory=MemorySnapshot(visited={"B001": visited_on}), today=TODAY,
-        )[0].score
-        assert decayed == pytest.approx(round(base * factor, 4), abs=1e-3)
-
-    def test_no_memory_leaves_scores_untouched(self):
-        pool = [_poi("B001", "都江堰")]
-        assert score_attractions(pool, ANCHOR, today=TODAY)[0].score == \
-               score_attractions(pool, ANCHOR, memory=MemorySnapshot(), today=TODAY)[0].score

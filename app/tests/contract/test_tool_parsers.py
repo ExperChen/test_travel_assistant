@@ -670,11 +670,32 @@ class TestDistanceBatch:
 
 
 class TestDirectionTransit:
-    @respx.mock
-    async def test_parses_best_transit(self, amap, load_fixture):
-        respx.get(f"{AMAP_BASE}/v3/direction/transit/integrated").mock(
-            return_value=httpx.Response(200, json=load_fixture("amap_transit"))
+    """公交换乘：**v3 与 v5 两版都要吃得下。**
+
+    主链路默认走 v5，但 v3 仍受支持。两版的响应结构不同——v5 把时长票价挪进了
+    `cost` 对象——所以每条断言都得在两版上各跑一遍，否则切版本时会静默出错。
+    """
+
+    URLS = {
+        "v3": f"{AMAP_BASE}/v3/direction/transit/integrated",
+        "v5": f"{AMAP_BASE}/v5/direction/transit/integrated",
+    }
+
+    def _mock(self, version: str, load_fixture):
+        """按版本挂 mock。v5 的 fixture 从 v3 的改造而来，只动结构不动数值，
+        这样两版的断言可以完全一致——数值不同就说明解析错了。"""
+        payload = load_fixture("amap_transit")
+        if version == "v5":
+            payload = _as_v5(payload)
+        return respx.get(self.URLS[version]).mock(
+            return_value=httpx.Response(200, json=payload)
         )
+
+    @pytest.mark.parametrize("version", ["v3", "v5"])
+    @respx.mock
+    async def test_parses_best_transit(self, amap, load_fixture, monkeypatch, version):
+        monkeypatch.setattr("app.config.settings.amap_route_version", version)
+        self._mock(version, load_fixture)
 
         leg = await direction_transit(
             GeoPoint.gcj02(116.4815, 39.9905),
@@ -685,50 +706,76 @@ class TestDirectionTransit:
 
         assert leg is not None
         assert leg.mode == "transit"
+        # 两版必须给出**完全相同**的解析结果
         assert leg.duration_min == 65
         assert leg.cost_cny == 6.0
         assert leg.taxi_cost_cny == 82.0
         assert leg.detail == "地铁15号线 → 地铁10号线（步行 1850 米）"
 
+    @pytest.mark.parametrize("version", ["v3", "v5"])
     @respx.mock
-    async def test_no_polyline_leaks_into_the_result(self, amap, load_fixture):
-        respx.get(f"{AMAP_BASE}/v3/direction/transit/integrated").mock(
-            return_value=httpx.Response(200, json=load_fixture("amap_transit"))
-        )
+    async def test_no_polyline_leaks_into_the_result(
+        self, amap, load_fixture, monkeypatch, version
+    ):
+        monkeypatch.setattr("app.config.settings.amap_route_version", version)
+        self._mock(version, load_fixture)
         leg = await direction_transit(
-            GeoPoint.gcj02(116.48, 39.99), GeoPoint.gcj02(116.31, 39.99), city="010", client=amap
+            GeoPoint.gcj02(116.48, 39.99), GeoPoint.gcj02(116.31, 39.99),
+            city="010", client=amap,
         )
         assert "polyline" not in leg.model_dump_json()
 
     @respx.mock
-    async def test_departure_time_is_formatted_for_amap(self, amap, load_fixture):
+    async def test_v3_request_shape(self, amap, load_fixture, monkeypatch):
         from datetime import datetime
 
-        route = respx.get(f"{AMAP_BASE}/v3/direction/transit/integrated").mock(
-            return_value=httpx.Response(200, json=load_fixture("amap_transit"))
-        )
+        monkeypatch.setattr("app.config.settings.amap_route_version", "v3")
+        route = self._mock("v3", load_fixture)
         await direction_transit(
-            GeoPoint.gcj02(116.48, 39.99),
-            GeoPoint.gcj02(116.31, 39.99),
-            city="010",
-            depart_at=datetime(2026, 8, 10, 8, 30),
-            client=amap,
+            GeoPoint.gcj02(116.48, 39.99), GeoPoint.gcj02(116.31, 39.99),
+            city="010", depart_at=datetime(2026, 8, 10, 8, 30), client=amap,
         )
 
         params = route.calls.last.request.url.params
+        assert params["city"] == "010"
         assert params["date"] == "2026-8-10"  # 高德要的是不补零的格式
         assert params["time"] == "08:30"
         assert params["extensions"] == "all"
 
     @respx.mock
-    async def test_no_route_returns_none_instead_of_raising(self, amap):
-        respx.get(f"{AMAP_BASE}/v3/direction/transit/integrated").mock(
+    async def test_v5_request_shape(self, amap, load_fixture, monkeypatch):
+        """v5 的入参和 v3 不是一回事，三处都会静默出错。"""
+        from datetime import datetime
+
+        monkeypatch.setattr("app.config.settings.amap_route_version", "v5")
+        route = self._mock("v5", load_fixture)
+        await direction_transit(
+            GeoPoint.gcj02(116.48, 39.99), GeoPoint.gcj02(116.31, 39.99),
+            city="010", depart_at=datetime(2026, 8, 10, 8, 30), client=amap,
+        )
+
+        params = route.calls.last.request.url.params
+        assert params["city1"] == "010"       # 不是 city
+        assert params["city2"] == "010"
+        assert params["time"] == "8-30"       # 不是 08:30
+        # **不传 show_fields=cost 就一个数都拿不到**
+        assert "cost" in params["show_fields"]
+
+    @pytest.mark.parametrize("version", ["v3", "v5"])
+    @respx.mock
+    async def test_no_route_returns_none_instead_of_raising(
+        self, amap, monkeypatch, version
+    ):
+        monkeypatch.setattr("app.config.settings.amap_route_version", version)
+        respx.get(self.URLS[version]).mock(
             return_value=httpx.Response(200, json={"status": "1", "route": {"transits": []}})
         )
         leg = await direction_transit(
-            GeoPoint.gcj02(116.48, 39.99), GeoPoint.gcj02(116.31, 39.99), city="010", client=amap
+            GeoPoint.gcj02(116.48, 39.99), GeoPoint.gcj02(116.31, 39.99),
+            city="010", client=amap,
         )
-        # 郊区景点常常没有公交方案，这是正常结果，planner 会降级到驾车
+        # 郊区景点常常没有公交方案，这是正常结果，planner 会降级到驾车。
+        # v5 的 strategy=6（地铁图模式）在很多 OD 上也是这个形态。
         assert leg is None
 
     async def test_city_is_required(self, amap):
@@ -736,6 +783,26 @@ class TestDirectionTransit:
             await direction_transit(
                 GeoPoint.gcj02(116.48, 39.99), GeoPoint.gcj02(116.31, 39.99), city="", client=amap
             )
+
+
+def _as_v5(payload: dict) -> dict:
+    """把 v3 的公交响应改造成 v5 的结构，**数值一个不动**。
+
+    v3: transits[].duration / .cost      route.taxi_cost
+    v5: transits[].cost.duration / .transit_fee   route.cost.taxi_fee
+    """
+    import copy
+
+    out = copy.deepcopy(payload)
+    route = out.get("route") or {}
+    if "taxi_cost" in route:
+        route["cost"] = {"taxi_fee": route.pop("taxi_cost")}
+    for transit in route.get("transits") or []:
+        transit["cost"] = {
+            "duration": transit.pop("duration", "0"),
+            "transit_fee": transit.pop("cost", None),
+        }
+    return out
 
 
 class TestDirectionDriving:

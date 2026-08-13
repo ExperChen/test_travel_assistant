@@ -152,27 +152,48 @@ async def direction_transit(
     if not city:
         raise InvalidParams("公交换乘必须提供起点城市（city）")
 
-    params: dict = {
-        "origin": origin.to_amap(),
-        "destination": destination.to_amap(),
-        "city": city,
-        "cityd": cityd,
-        "strategy": strategy,
-        "extensions": "all",  # 不传 all 就拿不到票价与途经站点
-    }
+    use_v5 = settings.amap_route_version == "v5"
+    if use_v5:
+        # v5：城市参数改名 city1/city2；时长票价挪进 cost 对象，
+        # **不传 show_fields=cost 就一个数都拿不到**
+        path = "/v5/direction/transit/integrated"
+        params: dict = {
+            "origin": origin.to_amap(),
+            "destination": destination.to_amap(),
+            "city1": city,
+            "city2": cityd or city,
+            "strategy": strategy,
+            "show_fields": "cost",
+        }
+    else:
+        path = "/v3/direction/transit/integrated"
+        params = {
+            "origin": origin.to_amap(),
+            "destination": destination.to_amap(),
+            "city": city,
+            "cityd": cityd,
+            "strategy": strategy,
+            "extensions": "all",  # 不传 all 就拿不到票价与途经站点
+        }
     if depart_at:
         params["date"] = f"{depart_at.year}-{depart_at.month}-{depart_at.day}"
-        params["time"] = depart_at.strftime("%H:%M")
+        # v5 的时刻格式是 9-30，v3 是 09:30
+        params["time"] = (
+            f"{depart_at.hour}-{depart_at.minute}" if use_v5
+            else depart_at.strftime("%H:%M")
+        )
 
     payload = await (client or amap_client()).get(
-        "/v3/direction/transit/integrated", params, ttl_s=settings.cache_ttl_amap_route_s
+        path, params, ttl_s=settings.cache_ttl_amap_route_s
     )
 
     route = payload.get("route") or {}
     transits = route.get("transits") or []
     if not transits:
-        # 没有公交方案是正常结果（郊区景点常见），让 planner 去降级到驾车
-        log.info("该 OD 无公交方案", extra={"city": city})
+        # 没有公交方案是正常结果（郊区景点常见），让 planner 去降级到驾车。
+        # ⚠️ v5 的 strategy=6（地铁图模式）在很多 OD 上就是这样：
+        #    status=1 但 transits 为空——是"成功且无方案"，不是报错。
+        log.info("该 OD 无公交方案", extra={"city": city, "api": path})
         return None
 
     best = transits[0]
@@ -190,14 +211,21 @@ async def direction_transit(
     if walking_m:
         detail += f"（步行 {walking_m} 米）"
 
+    cost = best.get("cost") if isinstance(best.get("cost"), dict) else {}
     return RouteLeg(
         mode="transit",
         # route.distance 在官方文档里被标注为"全程步行距离"，与字段名语义存疑，
         # 联调时需实测确认；步行距离另有 walking_distance，已单独体现在 detail 里。
         distance_m=_int(route.get("distance")),
-        duration_min=round(_int(best.get("duration")) / 60),
-        cost_cny=_float_or_none(best.get("cost")),
-        taxi_cost_cny=_float_or_none(route.get("taxi_cost")),
+        # v5: transits[].cost.duration / .transit_fee；v3: transits[].duration / .cost
+        duration_min=round(_int(cost.get("duration") if use_v5 else best.get("duration")) / 60),
+        cost_cny=_float_or_none(
+            cost.get("transit_fee") if use_v5 else best.get("cost")
+        ),
+        taxi_cost_cny=_float_or_none(
+            (route.get("cost") or {}).get("taxi_fee") if use_v5
+            else route.get("taxi_cost")
+        ),
         detail=detail,
     )
 

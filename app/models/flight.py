@@ -143,7 +143,7 @@ class FlightItinerary(BaseModel):
 
     @property
     def arrives_at(self) -> datetime | None:
-        """去程落地时间——route_planner 首日时间窗的起点。"""
+        """去程落地时间——首日能从几点开始安排，由它决定。"""
         return self.flights[-1].arrival_airport.at if self.flights else None
 
     def flies_route(self, departure_id: str, arrival_id: str) -> bool:
@@ -151,7 +151,7 @@ class FlightItinerary(BaseModel):
 
         上游偶尔会掺进不属于本次查询的航段（换机场重试、`departure_token`
         配错时尤其容易）。首段起飞机场和末段降落机场必须对得上——否则用户会
-        拿到一张"从别的城市出发"的机票，而落地时间又被 route_planner 当成
+        拿到一张"从别的城市出发"的机票，而落地时间又被下游当成
         首日时间窗的起点，整份行程一起错。
         """
         if not self.flights:
@@ -251,7 +251,7 @@ class FlightSearchParams(BaseModel):
 
 
 class FlightBranch(BaseModel):
-    """flight 分支的产出。后两个时间字段是 route_planner 的硬依赖。"""
+    """航班搜索的产出。后两个时间字段决定首末日能安排多少内容。"""
 
     params: FlightSearchParams = Field(default_factory=FlightSearchParams)
     departure_options: list[Airport] = Field(

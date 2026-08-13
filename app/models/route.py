@@ -1,33 +1,25 @@
-"""行程与路线模型（架构文档 §7.2）。"""
+"""路线模型（架构文档 §7.2）。
+
+`DayItem` / `DayPlan` / `Itinerary` 已随固定管线一起删除——它们是排期算法的
+输出结构，而排期现在由模型自己在文字里完成。剩下的两个是**路径工具的返回值**，
+和编排方式无关：谁来决定查哪一段，查出来都是这个形状。
+"""
 
 from __future__ import annotations
 
-from datetime import date, datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from app.models.attraction import Attraction
-from app.models.common import GeoPoint
-
-__all__ = [
-    "TransportMode",
-    "ItemKind",
-    "RouteLeg",
-    "DistanceResult",
-    "DayItem",
-    "DayPlan",
-    "Itinerary",
-]
+__all__ = ["TransportMode", "RouteLeg", "DistanceResult"]
 
 TransportMode = Literal["transit", "driving", "walking"]
-ItemKind = Literal["airport", "hotel", "attraction", "meal"]
 
 
 class RouteLeg(BaseModel):
     """两个行程点之间的一段交通。
 
-    `from_ref` / `to_ref` 由 route_planner 填——路径工具只认坐标，不认行程点 id。
+    `from_ref` / `to_ref` 供调用方标注这一段连的是哪两个点——路径工具只认坐标。
     """
 
     from_ref: str = ""
@@ -61,68 +53,3 @@ class DistanceResult(BaseModel):
     @property
     def duration_min(self) -> int | None:
         return None if self.duration_s is None else round(self.duration_s / 60)
-
-
-class DayItem(BaseModel):
-    kind: ItemKind
-    ref_id: str
-    name: str
-    location: GeoPoint
-    start_time: datetime
-    end_time: datetime
-    ticket_cost_cny: float | None = Field(
-        default=None, description="景点门票参考价，用于汇总总花费"
-    )
-
-    @property
-    def duration_min(self) -> int:
-        return max(0, int((self.end_time - self.start_time).total_seconds() // 60))
-
-
-class DayPlan(BaseModel):
-    day_index: int
-    day: date
-    window_start: datetime
-    window_end: datetime
-    items: list[DayItem] = Field(default_factory=list)
-    legs: list[RouteLeg] = Field(default_factory=list)
-
-    @property
-    def total_commute_min(self) -> int:
-        return sum(leg.duration_min for leg in self.legs)
-
-    @property
-    def is_empty(self) -> bool:
-        return not self.items
-
-
-class Itinerary(BaseModel):
-    days: list[DayPlan] = Field(default_factory=list)
-    unscheduled: list[Attraction] = Field(
-        default_factory=list, description="时间窗塞不下的景点，作为备选回传"
-    )
-
-    @property
-    def total_commute_min(self) -> int:
-        return sum(d.total_commute_min for d in self.days)
-
-    @property
-    def total_transport_cost_cny(self) -> float:
-        return sum(leg.cost_cny or 0.0 for d in self.days for leg in d.legs)
-
-    @property
-    def total_ticket_cost_cny(self) -> float:
-        # 同一景点若跨天出现（如分两次逛的大景区）只计一次门票
-        seen: dict[str, float] = {}
-        for day in self.days:
-            for item in day.items:
-                if item.kind == "attraction" and item.ticket_cost_cny:
-                    seen[item.ref_id] = item.ticket_cost_cny
-        return sum(seen.values())
-
-    def totals(self) -> dict[str, float]:
-        return {
-            "commute_min": self.total_commute_min,
-            "transport_cost_cny": round(self.total_transport_cost_cny, 2),
-            "ticket_cost_cny": round(self.total_ticket_cost_cny, 2),
-        }

@@ -2,9 +2,11 @@
 
     uvicorn app.main:app --host 127.0.0.1 --port 8000
 
-⚠️ **必须 `--workers 1`**：checkpointer（MemorySaver）、SSE 事件缓冲、配额记账
-都是进程内的，多 worker 下 `/answer` 可能落到没有该 thread 的进程上。
-上多副本前要先把这三样换成共享存储（架构文档 §4.4 / §8.2）。
+规划本身不在这里——它是 CLI 上的自主 agent（`main.py`）。HTTP 侧只剩
+参数收集（`/trips/chat`、`/trips/parse`）和长期记忆（`/profile/*`）。
+
+⚠️ **仍建议 `--workers 1`**：intake 的会话存储和配额记账都是进程内的，
+多 worker 下同一段对话可能落到不同进程上，累积的槽位就断了。
 """
 
 from __future__ import annotations
@@ -22,30 +24,21 @@ from app.api.limits import limiter
 from app.api.v1 import routes_health, routes_profile, routes_trips
 from app.config import settings
 from app.core.logging import get_logger, setup_logging
-from app.services.trip_service import TripService
 from app.tools.registry import close_clients
 
 log = get_logger(__name__)
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     setup_logging(settings.log_level, json_output=settings.log_json)
-    service = TripService()
-    app.state.trip_service = service
-    # 没有它，用户关掉页面的行程会永远卡在 waiting_input（架构文档 §4.3）
-    service.start_sweeper()
     log.info(
         "服务启动",
-        extra={
-            "auth": settings.auth_enabled,
-            "model": settings.llm_model,
-            "interrupt_timeout_s": settings.interrupt_timeout_s,
-        },
+        extra={"auth": settings.auth_enabled, "model": settings.llm_model},
     )
     try:
         yield
     finally:
-        await app.state.trip_service.aclose()
         await close_clients()
         log.info("服务已停止")
 
@@ -54,7 +47,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="Better Travel Assistant",
         version="0.1.0",
-        description="往返机票 + 目的地酒店 + 热门景点 + 逐日路径规划（目的地限中国大陆）",
+        description="行程需求收集与长期记忆（目的地限中国大陆）。规划由 CLI 上的自主 agent 承担",
         lifespan=lifespan,
     )
 
@@ -67,7 +60,7 @@ def create_app() -> FastAPI:
         allow_origins=settings.cors_origins,
         allow_credentials=False,
         allow_methods=["GET", "POST"],
-        allow_headers=["Content-Type", "X-API-Key", "X-Profile-Id", "Last-Event-ID"],
+        allow_headers=["Content-Type", "X-API-Key", "X-Profile-Id"],
     )
 
     install_error_handlers(app)

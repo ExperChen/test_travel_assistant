@@ -40,7 +40,6 @@ SLOT_LABELS: dict[str, str] = {
     "children_ages": "儿童年龄",
     "budget_per_night": "每晚预算",
     "travel_class": "舱位",
-    "pace": "节奏",
     "transport": "市内交通",
     "must_visit": "必去",
     "avoid": "排除",
@@ -94,6 +93,13 @@ class IntakeSession(BaseModel):
         description="已经问过的槽位。同一个字段不追问第二次——问了没答说明用户"
         "不想说，再问就是查户口",
     )
+    awaiting: str = Field(
+        default="",
+        description=(
+            "上一轮追问的槽位名（如 departure_city）。用户回答追问时最自然的说法是"
+            "光秃秃一个「北京」，任何规则都抽不出来——得靠「刚问的是哪个字段」对上号"
+        ),
+    )
     steps: list[ReactStep] = Field(default_factory=list, description="最近一轮的 ReAct 轨迹")
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
@@ -143,6 +149,12 @@ class IntakeReply(BaseModel):
     missing: list[str] = Field(default_factory=list, description="还缺的阻断级字段（中文标签）")
     steps: list[ReactStep] = Field(default_factory=list, description="本轮 ReAct 轨迹，便于调试")
     degraded: bool = Field(default=False, description="true = 模型没参与，走的规则兜底")
+    degraded_reason: str = Field(
+        default="",
+        description="降级的**具体原因**（超时 / 限流 / 未配置…）。"
+        "ReAct 循环把异常吞掉是刻意的——对话不能因为模型抽风就断掉——"
+        "但原因不能跟着一起丢，否则用户只看到一句「没答上来」，无从排查",
+    )
 
     @property
     def done(self) -> bool:

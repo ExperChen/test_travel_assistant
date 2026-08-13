@@ -1,4 +1,10 @@
-"""行程请求与结果的顶层契约（架构文档 §7.1 / §7.2）。"""
+"""行程请求的顶层契约（架构文档 §7.1）。
+
+原来这里还有 `TripPlan` / `CostBreakdown`——它们是固定管线的**产物**：
+状态机跑完把航班、酒店、逐日行程、配额、警告装进一个结构体。管线删掉之后
+没有任何东西再生产它们（自主 agent 交付的是一段 Markdown），所以一并删了。
+留下的 `TripRequest` 仍是全链路的入口：intake 收集它，agent 照它排行程。
+"""
 
 from __future__ import annotations
 
@@ -8,17 +14,10 @@ from typing import Literal, Self
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.core.dates import trip_day_count
-from app.models.attraction import Attraction
-from app.models.common import CityRef, LocaleCtx, QuotaCounter
-from app.models.errors import ApiError, PlanWarning
-from app.models.flight import FlightBranch, TravelClass
-from app.models.hotel import HotelBranch
-from app.models.route import Itinerary, TransportMode
+from app.models.flight import TravelClass
+from app.models.route import TransportMode
 
-__all__ = ["Pace", "TripStatus", "TripRequest", "TripPlan", "CostBreakdown"]
-
-Pace = Literal["relaxed", "standard", "packed"]
-TripStatus = Literal["running", "waiting_input", "done", "failed"]
+__all__ = ["TripRequest"]
 
 
 class TripRequest(BaseModel):
@@ -42,11 +41,14 @@ class TripRequest(BaseModel):
     must_visit: list[str] = Field(default_factory=list, description="强制进入行程的景点名")
     avoid: list[str] = Field(default_factory=list)
 
-    pace: Pace = "standard"
-    transport: TransportMode = "transit"
-    auto_select: bool = Field(
-        default=False, description="true = 全自动，不产生任何中断问题"
+    special_requests: list[str] = Field(
+        default_factory=list,
+        description="特殊出行需求：带老人、行李多、不早起、素食……"
+        "认得出的换成一句可执行的指令进 prompt（见 app/models/special.py），"
+        "认不出的原样传给模型——**不丢用户说过的话**",
     )
+
+    transport: TransportMode = "transit"
 
     @field_validator("departure_city", "destination_city")
     @classmethod
@@ -88,74 +90,3 @@ class TripRequest(BaseModel):
         ⚠️ 不是用户说的"N 天"，那个看 `duration_days`。
         """
         return trip_day_count(self.outbound_date, self.return_date)
-
-
-class CostBreakdown(BaseModel):
-    """预估花费：**只算机票和住宿**。
-
-    不计市内交通——金额小、误差大（票价随换乘方案变，出租车更没准），
-    混进总价只会拉低整个数字的可信度。也不计门票，那个数据本来就基本查不到。
-
-    任一分项缺失时 `total_cny` 为 None，缺哪项写在 `missing` 里。
-    **绝不把缺失当 0**：把「酒店没标价」算成「住宿 ¥0」，总价就成了谎报。
-    """
-
-    flight_cny: float | None = None
-    hotel_cny: float | None = None
-    nights: int = 0
-    nightly_cny: float | None = Field(default=None, description="用于展示「4 晚 × ¥520」")
-    missing: list[str] = Field(default_factory=list)
-
-    @property
-    def total_cny(self) -> float | None:
-        if self.missing:
-            return None
-        return round((self.flight_cny or 0.0) + (self.hotel_cny or 0.0), 2)
-
-
-class TripPlan(BaseModel):
-    """一次规划的完整快照，`GET /trips/{id}` 与 SSE 的 `done` 事件都返回它。"""
-
-    trip_id: str
-    status: TripStatus = "running"
-    request: TripRequest
-    locale: LocaleCtx = Field(default_factory=LocaleCtx)
-
-    destination: CityRef | None = None
-    flights: FlightBranch | None = None
-    hotel: HotelBranch | None = None
-    attractions: list[Attraction] = Field(default_factory=list)
-    itinerary: Itinerary | None = None
-    summary: str | None = None
-
-    warnings: list[PlanWarning] = Field(default_factory=list)
-    error: ApiError | None = None
-    quota: QuotaCounter = Field(default_factory=QuotaCounter)
-
-    @property
-    def is_terminal(self) -> bool:
-        return self.status in ("done", "failed")
-
-    @property
-    def costs(self) -> CostBreakdown:
-        """机票 + 住宿。SerpAPI 给的机票价已是往返总价、已含全部乘客，不要再乘。"""
-        nights = self.request.nights
-        breakdown = CostBreakdown(nights=nights)
-
-        selected_flight = self.flights.selected if self.flights else None
-        if selected_flight is not None and selected_flight.price is not None:
-            breakdown.flight_cny = float(selected_flight.price)
-        else:
-            breakdown.missing.append("机票")
-
-        hotel = self.hotel.selected if self.hotel else None
-        if hotel is not None and hotel.total_price is not None:
-            breakdown.hotel_cny = float(hotel.total_price)
-            breakdown.nightly_cny = round(hotel.total_price / nights, 2) if nights else None
-        elif hotel is not None and hotel.nightly_price is not None:
-            breakdown.nightly_cny = float(hotel.nightly_price)
-            breakdown.hotel_cny = round(hotel.nightly_price * nights, 2)
-        else:
-            breakdown.missing.append("住宿")
-
-        return breakdown

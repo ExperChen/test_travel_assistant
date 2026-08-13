@@ -60,11 +60,9 @@ class TestRuleExtraction:
         # 「成都市」和「成都」要归一，否则和高德返回的名字对不上
         assert extract_by_rules("从北京市去成都市玩3天").destination_city == "成都"
 
-    def test_picks_up_pace_and_transport(self):
-        e = extract_by_rules("去成都玩3天，自驾，节奏紧凑")
-
-        assert e.transport == "driving"
-        assert e.pace == "packed"
+    def test_picks_up_transport(self):
+        assert extract_by_rules("去成都玩3天，自驾").transport == "driving"
+        assert extract_by_rules("去成都玩3天，坐地铁").transport == "transit"
 
     def test_two_dates_become_outbound_and_return(self):
         e = extract_by_rules("9月5号去成都，9月9号回来")
@@ -207,19 +205,19 @@ class TestFieldProvenance:
 
         assert origins["departure_city"] == "prompt"
         assert origins["return_date"] == "derived"  # 由「玩 5 天」推出来
-        assert origins["pace"] == "default"
+        assert origins["transport"] == "default"
 
     def test_enum_values_are_shown_in_chinese(self):
         draft = resolve(
             "…",
             Extraction(departure_city="北京", destination_city="成都",
                        outbound_date_text="9月5号", travel_days=3,
-                       pace="packed", transport="driving"),
+                       travel_class="business", transport="driving"),
             today=TODAY,
         )
         shown = {f.key: f.value for f in draft.fields}
 
-        assert shown["pace"] == "紧凑"
+        assert shown["travel_class"] == "商务舱"
         assert shown["transport"] == "自驾"
 
 
@@ -304,3 +302,47 @@ class TestParsePrompt:
             await parse_prompt("去成都", today=TODAY, llm=llm_returning())
 
         assert quota.llm == 1
+
+
+class TestSpecialRequests:
+    """特殊需求走的是和 must_visit 一样的路子：规则认关键词，模型补自由文本。"""
+
+    def test_rules_pick_up_the_common_ones(self):
+        e = extract_by_rules("9月5号从北京去成都玩5天，带着老人，行李多，不早起")
+        assert e.special_requests == ["行李多", "行动不便", "不早起"]
+
+    def test_a_plain_request_has_none(self):
+        assert extract_by_rules("9月5号从北京去成都玩5天").special_requests == []
+
+    def test_reaches_the_request(self):
+        draft = resolve(
+            "…",
+            Extraction(departure_city="北京", destination_city="成都",
+                       outbound_date_text="9月5号", travel_days=5,
+                       special_requests=["带着我妈，腿脚不太好"]),
+            today=TODAY,
+        )
+        assert draft.request.special_requests == ["行动不便"]
+
+    def test_free_text_survives_normalisation(self):
+        """认不出来不等于该丢掉——模型能理解的比规则多。"""
+        draft = resolve(
+            "…",
+            Extraction(departure_city="北京", destination_city="成都",
+                       outbound_date_text="9月5号", travel_days=5,
+                       special_requests=["我对花粉过敏"]),
+            today=TODAY,
+        )
+        assert draft.request.special_requests == ["我对花粉过敏"]
+
+    def test_shows_up_as_a_field_with_provenance(self):
+        draft = resolve(
+            "…",
+            Extraction(departure_city="北京", destination_city="成都",
+                       outbound_date_text="9月5号", travel_days=5,
+                       special_requests=["不早起"]),
+            today=TODAY,
+        )
+        field = next(f for f in draft.fields if f.key == "special_requests")
+        assert field.origin == "prompt"
+        assert field.value == "不早起"

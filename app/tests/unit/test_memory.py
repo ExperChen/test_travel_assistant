@@ -24,17 +24,17 @@ TODAY = date(2026, 8, 7)
 class TestConfidence:
     def test_first_observation_is_not_yet_trusted(self):
         """说过一次不算习惯——直接拿来填参数是过度自信。"""
-        profile = Profile(profile_id="u1").observe_all({"pace": "relaxed"}, on=TODAY)
-        assert profile.preferences["pace"].confidence < HIGH_CONFIDENCE
-        assert profile.confident_value("pace") is None
+        profile = Profile(profile_id="u1").observe_all({"travel_class": "business"}, on=TODAY)
+        assert profile.preferences["travel_class"].confidence < HIGH_CONFIDENCE
+        assert profile.confident_value("travel_class") is None
 
     def test_three_consistent_observations_earn_trust(self):
         """0.3 → 0.51 → 0.657，第三次越过 0.6 —— 说过三次才算习惯。"""
         profile = Profile(profile_id="u1")
         for _ in range(3):
-            profile = profile.observe_all({"pace": "relaxed"}, on=TODAY)
-        assert profile.preferences["pace"].samples == 3
-        assert profile.confident_value("pace") == "relaxed"
+            profile = profile.observe_all({"travel_class": "business"}, on=TODAY)
+        assert profile.preferences["travel_class"].samples == 3
+        assert profile.confident_value("travel_class") == "business"
 
     def test_changing_the_value_resets_samples_and_decays(self):
         """换了值：置信度打七折、采样归一、值换新。
@@ -55,10 +55,10 @@ class TestConfidence:
     def test_unknown_fields_are_never_recorded(self):
         """只记 REMEMBERED_FIELDS 里的字段，目的地/日期是噪音。"""
         profile = Profile(profile_id="u1").observe_all(
-            {"destination_city": "成都", "outbound_date": "2026-09-05", "pace": "packed"},
+            {"destination_city": "成都", "outbound_date": "2026-09-05", "travel_class": "business"},
             on=TODAY,
         )
-        assert set(profile.preferences) == {"pace"}
+        assert set(profile.preferences) == {"travel_class"}
 
 
 class TestChildrenAges:
@@ -125,12 +125,12 @@ class TestVisitDecay:
 class TestMemoryStore:
     async def test_roundtrip(self):
         store = MemoryStore(":memory:")
-        profile = Profile(profile_id="u1").observe_all({"pace": "relaxed"}, on=TODAY)
+        profile = Profile(profile_id="u1").observe_all({"travel_class": "business"}, on=TODAY)
         assert await store.save_profile(profile)
 
         loaded = await store.load_profile("u1")
         assert loaded is not None
-        assert loaded.preferences["pace"].value == "relaxed"
+        assert loaded.preferences["travel_class"].value == "business"
         await store.aclose()
 
     async def test_missing_profile_is_none_not_an_error(self):
@@ -149,9 +149,9 @@ class TestMemoryStore:
 
     async def test_forget_one_preference(self):
         store = MemoryStore(":memory:")
-        await store.patch_preference("u1", "pace", "packed", on=TODAY)
+        await store.patch_preference("u1", "travel_class", "business", on=TODAY)
         await store.patch_preference("u1", "transport", "driving", on=TODAY)
-        profile = await store.forget_preference("u1", "pace")
+        profile = await store.forget_preference("u1", "travel_class")
         assert profile is not None
         assert set(profile.preferences) == {"transport"}
         await store.aclose()
@@ -159,7 +159,7 @@ class TestMemoryStore:
     async def test_delete_wipes_preferences_and_history(self):
         """用户有权让系统忘掉一切——包括履历，不只是偏好。"""
         store = MemoryStore(":memory:")
-        await store.patch_preference("u1", "pace", "packed", on=TODAY)
+        await store.patch_preference("u1", "travel_class", "business", on=TODAY)
         await store.record_trip("u1", _history("trp_1", date(2026, 3, 1)))
 
         assert await store.delete_profile("u1")
